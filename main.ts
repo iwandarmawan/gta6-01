@@ -17,6 +17,10 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-game.ts';
 
+// Solmar Bay — an original open-world crime game for gta6-01, built in the recorded session.
+const GAME_NAME = 'Solmar Bay';
+console.log(`Handing in ${GAME_NAME} for gta6-01`);
+
 const here = fileURLToPath(new URL('.', import.meta.url));
 const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
 
