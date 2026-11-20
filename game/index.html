@@ -21,6 +21,9 @@
   #hud-speedbox { bottom: 16px; right: 16px; text-align: right; }
   #hud-speed { font-size: 44px; font-weight: 800; line-height: 1; }
   #hud-speed-label { font-size: 13px; font-weight: 600; }
+  #hud-ammo { font-size: 17px; font-weight: 800; margin-top: 4px; letter-spacing: 1px; }
+  #hud-timer { top: 14px; left: 50%; transform: translateX(-50%); font-size: 34px; font-weight: 900; color: #ffd23b; background: rgba(0,0,0,.5); padding: 4px 16px; border-radius: 8px; opacity: 0; }
+  #hitmark { top: 50%; left: 50%; transform: translate(-50%,-50%); font-size: 30px; font-weight: 900; color: #fff; opacity: 0; }
   #hud-health { width: 170px; height: 12px; background: rgba(0,0,0,.5); border-radius: 6px; margin-top: 6px; overflow: hidden; margin-left: auto; }
   #hud-health-fill { height: 100%; width: 100%; background: #37c978; border-radius: 6px; }
   #hud-health-label { font-size: 11px; font-weight: 700; letter-spacing: 1px; margin-top: 3px; color: #ffffffcc; }
@@ -38,6 +41,9 @@
   .overlay p { font-size: 15px; line-height: 1.7; color: #dfe8f2; max-width: 520px; margin-bottom: 18px; }
   .overlay .controls { font-size: 14px; line-height: 1.9; background: rgba(0,0,0,.45); padding: 12px 22px; border-radius: 8px; margin-bottom: 22px; }
   .overlay .controls b { color: #f2d05a; }
+  #pause-missions { font-size: 15px; line-height: 1.9; background: rgba(0,0,0,.45); padding: 12px 22px; border-radius: 8px; margin-bottom: 12px; text-align: left; }
+  #pause-missions .p-mission.cur { color: #f2d05a; font-weight: 700; }
+  #pause-cash { font-size: 15px; font-weight: 700; color: #7ee081; margin-bottom: 18px; }
   .btn { pointer-events: auto; cursor: pointer; font-size: 19px; font-weight: 800; letter-spacing: 1px; color: #1a1a1a; background: #f2d05a; border: none; border-radius: 8px; padding: 14px 42px; margin: 6px; box-shadow: 0 4px 0 #b8860b; }
   .btn:hover { background: #ffd94a; }
   .btn:active { transform: translateY(3px); box-shadow: none; }
@@ -52,6 +58,8 @@
 <div id="wanted-flash"></div>
 
 <div id="hud-objective" class="hud"></div>
+<div id="hud-timer" class="hud"></div>
+<div id="hitmark" class="hud">✕</div>
 <div id="hud-right" class="hud">
   <div id="hud-cash">$120</div>
   <div id="hud-clock">10:00</div>
@@ -60,6 +68,7 @@
 <div id="hud-speedbox" class="hud">
   <div id="hud-speed">WALK</div>
   <div id="hud-speed-label"></div>
+  <div id="hud-ammo">FISTS</div>
   <div id="hud-health"><div id="hud-health-fill"></div></div>
   <div id="hud-health-label">HEALTH</div>
 </div>
@@ -72,7 +81,8 @@
   <p>Steal a car, outrun the Solmar Bay police, and run Delgado's jobs across a living coastal city. Traffic, pedestrians, cash pickups and a five-mission story arc — all yours to explore.</p>
   <div class="controls">
     <b>W A S D</b> walk / drive &nbsp;·&nbsp; <b>Shift</b> run &nbsp;·&nbsp; <b>Space</b> jump / handbrake<br>
-    <b>E</b> enter / exit car &nbsp;·&nbsp; <b>Mouse drag</b> look around &nbsp;·&nbsp; <b>P</b> pause &nbsp;·&nbsp; <b>M</b> mute
+    <b>E</b> enter / exit car &nbsp;·&nbsp; <b>Click / F</b> punch / shoot &nbsp;·&nbsp; <b>R</b> reload &nbsp;·&nbsp; <b>N</b> next job<br>
+    <b>Mouse drag</b> look around &nbsp;·&nbsp; <b>P</b> pause &nbsp;·&nbsp; <b>M</b> mute
   </div>
   <div>
     <button id="play-btn" class="btn">PLAY</button>
@@ -83,6 +93,8 @@
 <div id="pause" class="overlay">
   <h1>PAUSED</h1>
   <h2>Solmar Bay waits for no one — except right now.</h2>
+  <div id="pause-missions"></div>
+  <div id="pause-cash"></div>
   <div>
     <button id="resume-btn" class="btn">RESUME</button>
     <button id="restart-btn" class="btn ghost">RESTART</button>
@@ -109,6 +121,7 @@
 <script src="src/player.js"></script>
 <script src="src/police.js"></script>
 <script src="src/missions.js"></script>
+<script src="src/combat.js"></script>
 <script src="src/hud.js"></script>
 <script src="src/audio.js"></script>
 <script src="src/shots.js"></script>
