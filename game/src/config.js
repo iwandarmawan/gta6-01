@@ -1,116 +1,136 @@
-// Solmar Bay — every tuning number in one place. The city is a 10x10 block
-// grid on a 48 m pitch; the beach sits on the east edge, the plaza at the
-// centre. Nothing here depends on the screen size: the renderer scales the
-// 3D view to the window and the HUD is DOM.
+// Solmar Bay — shared constants, tuning and small math helpers.
+// Original game, written for the make.fun gta6-01 bounty. Nothing here is
+// from any other game: all names, places and numbers are our own.
 
+// ---- World layout -------------------------------------------------------
+// A 10x10-block grid city. Roads run on a regular pitch; each block holds
+// procedural buildings, and the west edge is a beach with the sea beyond it.
 export const WORLD = {
-  grid: 10, // blocks each way
-  block: 36, // a block is 36 m across
-  road: 12, // roads are 12 m wide
-  pitch: 48, // 48 m from one road centre to the next
-  half: 240, // city edge: 10 * 48 / 2
-  beachX: 280, // sand ends here, the sea begins
-  seed: 1337, // the deterministic city seed
+  PITCH: 54, // distance between neighbouring road centrelines (m)
+  BLOCK: 40, // building block side (m)
+  ROAD: 14, // road width (m)
+  GRID: 5, // roads at k * PITCH for k in -GRID..GRID
+  CITY_HALF: 270, // playable half-extent (m)
+  BEACH_X: -297, // sand strip starts here (west edge)
+  SEA_X: -340, // water plane starts here
+  CANAL_Z: 297, // canal along the south edge
+  SEED: 1337, // fixed seed: the same city every run
 };
 
-export const STEP = 1 / 60; // fixed simulation step, 60 updates a second
+// ---- Palette ------------------------------------------------------------
+export const COLORS = {
+  sky: 0x87bfe8,
+  fog: 0x9fc8e8,
+  sun: 0xfff2d0,
+  asphalt: 0x33363c,
+  asphaltLine: 0xd8d8d8,
+  sidewalk: 0x9a938a,
+  sand: 0xe8d29a,
+  sea: 0x2f7fb8,
+  grass: 0x5da24a,
+  plaza: 0xb9a98c,
+  fountain: 0x4fa8d8,
+  building: [0xc9a06a, 0x8fa3b8, 0xb87a6a, 0x9a8fb0, 0x6a8a7a, 0xd8c9a8, 0x7a6a8a],
+  roof: [0x5a4a3a, 0x6a6a6a, 0x8a5a4a],
+  palmTrunk: 0x7a5a38,
+  palmLeaf: 0x3f8a3a,
+  lamp: 0x2a2a2a,
+  lampGlow: 0xffe9a8,
+  carPaint: [0xc23a2e, 0x2e6ac2, 0xe8c832, 0x3a3a3a, 0xe8e8e8, 0x2e8a4a, 0x8a2e6a, 0xc26a2e],
+  policePaint: 0x1a2a4a,
+  policeLightR: 0xff2a2a,
+  policeLightB: 0x2a4aff,
+  thug: 0x3a2a3a,
+  marker: 0xffc832,
+  pickup: 0x32d832,
+};
 
-/** The chase camera's lens: a 62-degree field of view, near and far planes. */
-export const CAMERA = { fov: 62, near: 0.1, far: 1200 };
-
-export const PLAYER = {
+// ---- Tuning -------------------------------------------------------------
+export const TUNE = {
   walkSpeed: 6,
-  runSpeed: 10,
-  jumpSpeed: 8,
-  gravity: 22,
-  radius: 0.7,
-  health: 100,
-  healthRegen: 2, // HP per second while the heat is off
-};
-
-export const CAR = {
-  accel: 16,
-  brake: 30,
-  maxSpeed: 38,
-  maxReverse: 12,
-  steer: 1.9,
-  grip: 6,
-  radius: 2.3,
-  damagePerHit: 12,
-  smokeAt: 55, // damage above this starts smoking
-};
-
-export const TRAFFIC = {
-  count: 10,
-  speed: 9,
-  minGap: 14,
-};
-
-export const PEDS = { count: 18, walkSpeed: 1.6, fleeSpeed: 5.2 };
-
-export const POLICE = {
-  maxCars: 3,
-  chaseSpeed: 34,
-  ramDamage: 8,
-  ramCooldown: 0.8, // seconds between ram hits from one police car
-  bustTime: 1.5, // seconds of contact on foot before busted
-  decayDelay: 8, // quiet seconds before one star fades
-  roadblockAt: 3, // wanted level that puts roadblocks up
-};
-
-export const COMBAT = {
-  magSize: 12,
-  reserveMax: 48,
-  reloadTime: 1.2,
+  runSpeed: 10.5,
+  jumpSpeed: 8.5,
+  gravity: 24,
+  carAccel: 14,
+  carBrake: 26,
+  carReverse: 8,
+  carMaxSpeed: 30, // ~108 km/h
+  carMaxReverse: 9,
+  carSteer: 1.9,
+  carDrag: 0.6,
+  trafficCount: 14,
+  pedCount: 22,
+  cashPickupCount: 8,
+  pickupValue: 50,
+  pickupRespawn: 60, // seconds until a collected cash pickup comes back
+  bustedFine: 100,
+  wastedFine: 150,
+  wantedDecayDelay: 12, // seconds with no crime before stars start to fall
+  wantedDecayStep: 8, // seconds per lost star while hidden
+  wantedSightRange: 42, // police "see" the player inside this range
+  pistolMag: 12,
+  pistolReserve: 48,
+  pistolReload: 1.2, // seconds
+  pistolRange: 70,
   pistolDamage: 34,
-  punchDamage: 25,
+  punchDamage: 20,
   punchRange: 2.2,
-  shotRange: 90,
+  punchCooldown: 0.45,
+  thugHp: 68,
+  playerHp: 100,
+  missionTimeM3: 90, // Clockwork countdown, seconds
 };
 
+// ---- Missions -----------------------------------------------------------
+// Rico Vega runs jobs for fixer Delgado across Solmar Bay. Missions 1-4 are
+// playable; M5 unlocks only once the first four are done.
 export const MISSIONS = [
-  { id: 1, name: 'First Wheels', reward: 250, brief: 'Delgado needs wheels. Steal any car and bring it to the plaza marker.' },
-  { id: 2, name: 'The Getaway', reward: 300, brief: 'Pick up the package at the docks, then lose the heat and reach the safehouse.' },
-  { id: 3, name: 'Clockwork', reward: 400, brief: 'A 90-second delivery across the city. Late means nothing — do not be late.' },
-  { id: 4, name: 'The Informant', reward: 500, brief: 'Meet the informant in the park on foot. It is a setup — bring the pistol.' },
-  { id: 5, name: 'The Big One', reward: 1000, brief: 'Locked. Finish the first four jobs and Delgado will call.' },
+  {
+    id: 1, name: 'First Wheels', reward: 250,
+    briefing: 'Delgado: "Rico, welcome back. Steal a car and bring it to the plaza marker. Keep it clean."',
+    objective: 'Steal a car, then drive to the plaza marker',
+  },
+  {
+    id: 2, name: 'The Getaway', reward: 300,
+    briefing: 'Delgado: "Package is waiting at the docks. Grab it, then lose the heat and reach the safehouse."',
+    objective: 'Pick up the package at the docks, then reach the safehouse',
+  },
+  {
+    id: 3, name: 'Clockwork', reward: 400,
+    briefing: 'Delgado: "Ninety seconds. A parcel, across town, no excuses. The clock is already running."',
+    objective: 'Deliver across the city — 90 seconds!',
+  },
+  {
+    id: 4, name: 'The Informant', reward: 500,
+    briefing: 'Delgado: "Meet the informant in the park, on foot. It is a setup — bring the pistol."',
+    objective: 'Meet the informant in the park, survive the ambush',
+  },
+  {
+    id: 5, name: 'The Big One', reward: 1200,
+    briefing: 'Delgado: "One last job, Rico. The vault, the bridge, the whole bay watching. Finish the first four first."',
+    objective: 'Locked — finish missions 1–4 to unlock',
+  },
 ];
 
-export const ECONOMY = {
-  pickupValue: 50,
-  bustCost: 100,
-  wastedCost: 150,
-  startCash: 0,
+// ---- Key places in the city (world coordinates) --------------------------
+export const PLACES = {
+  plaza: { x: 0, z: 0 }, // mission 1 marker, city centre
+  docks: { x: -270, z: 162 }, // mission 2 pickup, west beach road
+  safehouse: { x: 270, z: -162 }, // mission 2 + 4 escape point, east edge
+  delivery: { x: 216, z: 216 }, // mission 3 drop-off, south-east corner
+  park: { x: 135, z: -81 }, // mission 4 meeting point, park block
+  spawn: { x: 0, z: 162 }, // player start, central avenue
 };
 
-export const KEYS = {
-  up: ['KeyW', 'ArrowUp'],
-  down: ['KeyS', 'ArrowDown'],
-  left: ['KeyA', 'ArrowLeft'],
-  right: ['KeyD', 'ArrowRight'],
-  jump: ['Space'],
-  run: ['ShiftLeft', 'ShiftRight'],
-  enter: ['KeyE'],
-  punch: ['KeyF'],
-  reload: ['KeyR'],
-  pause: ['KeyP', 'Escape'],
-  confirm: ['Enter', 'Space'],
-  mute: ['KeyM'],
-  weapon: ['Digit1', 'Digit2'],
-};
-
-export const SAVE_KEY = 'solmar-bay.save.v3';
-export const COLORS = {
-  sky: 0x8ec8ee,
-  fog: 0x8ec8ee,
-  ground: 0xb8b0a0,
-  road: 0x33363c,
-  sand: 0xe8d8a8,
-  sea: 0x2f7fb8,
-  plaza: 0xc9bda6,
-  grass: 0x6fae5a,
-  police: 0x1c2f6e,
-  policeLight: 0xff2a2a,
-  marker: 0xffc93c,
-  pickup: 0x39d353,
-};
+// ---- Math helpers --------------------------------------------------------
+export function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
+export function lerp(a, b, t) { return a + (b - a) * t; }
+export function dist2(ax, az, bx, bz) { const dx = ax - bx; const dz = az - bz; return Math.hypot(dx, dz); }
+// Smallest signed angle difference, in radians.
+export function angleDiff(a, b) {
+  let d = (b - a) % (Math.PI * 2);
+  if (d > Math.PI) d -= Math.PI * 2;
+  if (d < -Math.PI) d += Math.PI * 2;
+  return d;
+}
+export function angleLerp(a, b, t) { return a + angleDiff(a, b) * clamp(t, 0, 1); }

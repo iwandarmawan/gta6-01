@@ -1,189 +1,201 @@
-// Missions: Rico Vega's arc under fixer Delgado. Four playable jobs, each
-// with a briefing, a glowing waypoint marker, a minimap blip, an objective
-// line, success and fail, and a cash reward. The fifth job stays locked
-// until the first four are done. Cash pickups scattered around the city pay
-// $50 each and are collected by driving or walking over them.
-const THREE = window.THREE;
-import { MISSIONS, ECONOMY, PLAYER } from './config.js';
-import { spawnEnemy } from './combat.js';
+// Solmar Bay — the mission arc: five jobs from fixer Delgado, M1–M4
+// playable, M5 locked until the first four are done. Each mission has a
+// briefing, a waypoint beacon with a minimap blip, an objective line, and
+// a cash reward. Missions are started in order from the pause menu or
+// automatically when the previous one is finished.
 
-export function createMissions(G, scene) {
-  // The waypoint marker: a tall golden beam with a spinning ring.
-  const beam = new THREE.Mesh(
-    new THREE.CylinderGeometry(1.2, 1.2, 40, 12, 1, true),
-    new THREE.MeshBasicMaterial({ color: 0xffc93c, transparent: true, opacity: 0.35, side: THREE.DoubleSide }),
-  );
-  beam.visible = false;
-  scene.add(beam);
-  const ring = new THREE.Mesh(
-    new THREE.TorusGeometry(2.2, 0.18, 8, 24),
-    new THREE.MeshBasicMaterial({ color: 0xffc93c }),
-  );
-  ring.rotation.x = Math.PI / 2;
-  ring.visible = false;
-  scene.add(ring);
-  // Cash pickups: green glowing stacks.
-  for (const p of G.city.pickups) {
-    const mesh = new THREE.Mesh(
-      new THREE.BoxGeometry(0.9, 0.5, 0.9),
-      new THREE.MeshLambertMaterial({ color: 0x39d353, emissive: 0x1a7a2a }),
+import { MISSIONS, PLACES, TUNE, clamp, dist2 } from './config.js';
+
+const T = window.THREE;
+
+export class Missions {
+  constructor(scene, game) {
+    this.scene = scene;
+    this.game = game;
+    this.current = null; // active mission def, or null
+    this.phase = 'idle'; // idle | active | done | failed
+    this.timer = 0; // M3 countdown
+    this.marker = null; // {x, z} current waypoint
+    this.stage = 0; // multi-stage missions: 0 = first leg, 1 = second leg
+    this.done = []; // completed mission ids
+    this.bestDone = 0;
+    // Waypoint beacon: a glowing gold cylinder + a floating diamond.
+    this.beacon = new T.Group();
+    const pole = new T.Mesh(
+      new T.CylinderGeometry(0.5, 0.9, 26, 10, 1, true),
+      new T.MeshBasicMaterial({ color: 0xffc832, transparent: true, opacity: 0.35, side: T.DoubleSide, depthWrite: false }),
     );
-    mesh.position.set(p.x, 0.6, p.z);
-    scene.add(mesh);
-    p.mesh = mesh;
+    pole.position.y = 13;
+    this.beacon.add(pole);
+    const diamond = new T.Mesh(
+      new T.OctahedronGeometry(1.1),
+      new T.MeshBasicMaterial({ color: 0xffd832 }),
+    );
+    diamond.position.y = 4.5;
+    this.beacon.add(diamond);
+    this.diamond = diamond;
+    this.beacon.visible = false;
+    this.scene.add(this.beacon);
+    this.beaconTimer = 0;
   }
-  return { beam, ring, enemiesLeft: 0 };
-}
 
-export function setMarker(G, x, z) {
-  G.missions.beam.position.set(x, 20, z);
-  G.missions.beam.visible = true;
-  G.missions.ring.position.set(x, 0.4, z);
-  G.missions.ring.visible = true;
-  G.mission.target = { x, z };
-}
-
-export function hideMarker(G) {
-  G.missions.beam.visible = false;
-  G.missions.ring.visible = false;
-  G.mission.target = null;
-}
-
-export function startMission(G, id) {
-  const def = MISSIONS[id - 1];
-  G.mission = { id, stage: 'start', timer: 0, target: null, state: 'active', name: def.name, reward: def.reward };
-  G.hud.toast(`JOB ${id}: ${def.name} — $${def.reward}`);
-  if (id === 1) {
-    G.mission.stage = 'steal';
-    G.hud.objective('Steal any car — walk up to one and press E');
-  } else if (id === 2) {
-    G.mission.stage = 'pickup';
-    setMarker(G, G.city.docks.x, G.city.docks.z);
-    G.hud.objective('Pick up the package at the docks');
-  } else if (id === 3) {
-    G.mission.stage = 'deliver';
-    G.mission.timer = 90;
-    setMarker(G, G.city.northGate.x, G.city.northGate.z);
-    G.hud.objective('Deliver across the city — 90 seconds!');
-  } else if (id === 4) {
-    G.mission.stage = 'meet';
-    setMarker(G, G.city.park.x, G.city.park.z);
-    G.hud.objective('Meet the informant in the park — on foot');
+  // Start a mission by id (1-4 playable; 5 is locked until 1-4 are done).
+  start(id) {
+    const def = MISSIONS.find((m) => m.id === id);
+    if (!def) return false;
+    if (id === 5 && !(this.done.includes(1) && this.done.includes(2) && this.done.includes(3) && this.done.includes(4))) {
+      this.game.say('M5 "The Big One" is locked — finish missions 1–4 first.');
+      return false;
+    }
+    this.current = def;
+    this.phase = 'active';
+    this.stage = 0;
+    this.timer = def.id === 3 ? TUNE.missionTimeM3 : 0;
+    this.setMarkerFor(def.id, 0);
+    this.game.say(def.briefing);
+    this.game.audio.click();
+    return true;
   }
-  G.audio.sting();
-}
 
-export function completeMission(G) {
-  const m = G.mission;
-  G.cash += m.reward;
-  G.missionsDone[m.id] = true;
-  // Finishing a job patches Rico up a little — Delgado pays for the clinic.
-  G.player.health = Math.min(PLAYER.health, G.player.health + 25);
-  G.saveGame();
-  G.hud.toast(`Job done: ${m.name} — $${m.reward}`);
-  G.audio.sting();
-  hideMarker(G);
-  G.mission = { id: m.id, stage: 'done', timer: 0, target: null, state: 'done', name: m.name, reward: m.reward };
-  // Chain the next job: brief it after a short beat.
-  const next = m.id + 1;
-  if (next <= 4) {
-    G.pendingBrief = next;
-    G.pendingBriefTimer = 2;
+  // Where the beacon goes for a mission at a given stage.
+  setMarkerFor(id, stage) {
+    let at = PLACES.plaza;
+    if (id === 1) at = PLACES.plaza;
+    else if (id === 2) at = stage === 0 ? PLACES.docks : PLACES.safehouse;
+    else if (id === 3) at = PLACES.delivery;
+    else if (id === 4) at = stage === 0 ? PLACES.park : PLACES.safehouse;
+    else at = PLACES.plaza;
+    this.marker = { x: at.x, z: at.z };
+    this.beacon.position.set(at.x, 0, at.z);
+    this.beacon.visible = true;
   }
-}
 
-export function failMission(G, reason) {
-  const m = G.mission;
-  hideMarker(G);
-  G.mission = { id: m.id, stage: 'failed', timer: 0, target: null, state: 'failed', name: m.name, reward: m.reward };
-  G.failReason = reason;
-  G.audio.fail();
-  // The job-failed screen offers a retry on Enter.
-  G.mode = 'over';
-  G.hud.showOver('JOB FAILED', `${reason}. Press Enter to retry ${m.name}.`);
-}
-
-export function enemyDown(G) {
-  G.missions.enemiesLeft -= 1;
-  if (G.missions.enemiesLeft <= 0 && G.mission.id === 4 && G.mission.stage === 'ambush') {
-    G.mission.stage = 'escape';
-    setMarker(G, G.city.safehouse.x, G.city.safehouse.z);
-    G.hud.objective('Ambush cleared — escape to the safehouse!');
+  // The player reached the beacon (on foot within 4 m, or in a car within 6 m).
+  reachedMarker() {
+    if (!this.current || this.phase !== 'active' || !this.marker) return false;
+    const g = this.game;
+    const radius = g.player.inCar ? 6.5 : 4;
+    return dist2(g.player.x, g.player.z, this.marker.x, this.marker.z) < radius;
   }
-}
 
-function near(G, x, z, r) {
-  const px = G.inCar ? G.car.x : G.player.x;
-  const pz = G.inCar ? G.car.z : G.player.z;
-  return Math.hypot(px - x, pz - z) < r;
-}
+  complete() {
+    const g = this.game;
+    const def = this.current;
+    g.cash += def.reward;
+    this.done.push(def.id);
+    this.bestDone = Math.max(this.bestDone, def.id);
+    this.phase = 'done';
+    this.current = null;
+    this.beacon.visible = false;
+    this.marker = null;
+    g.say(`Job done: ${def.name} — +$${def.reward}.`);
+    g.audio.sting();
+    g.save();
+    // Offer the next job straight away.
+    const next = def.id + 1;
+    if (next <= 4) {
+      window.setTimeout(() => {
+        if (this.phase === 'done') this.start(next);
+      }, 2500);
+    }
+  }
 
-export function updateMission(G, dt) {
-  const m = G.mission;
-  if (!m || m.state !== 'active') return;
-  // Mission 3's clock runs down and fails the job at zero.
-  if (m.id === 3 && m.stage === 'deliver') {
-    m.timer -= dt;
-    if (m.timer <= 0) {
-      failMission(G, 'Out of time — the delivery was late');
+  fail(reason) {
+    const g = this.game;
+    this.phase = 'failed';
+    this.current = null;
+    this.beacon.visible = false;
+    this.marker = null;
+    // A failed ambush leaves no thugs standing around the park.
+    g.combat.clearThugs();
+    g.say(`Job failed: ${reason} — talk to Delgado to retry.`);
+    g.audio.fail();
+    window.setTimeout(() => { if (this.phase === 'failed') this.phase = 'idle'; }, 2000);
+  }
+
+  update(dt) {
+    const g = this.game;
+    if (this.beacon.visible) {
+      this.beaconTimer += dt;
+      this.diamond.rotation.y += dt * 2;
+      this.diamond.position.y = 4.5 + Math.sin(this.beaconTimer * 2.5) * 0.5;
+    }
+    if (!this.current || this.phase !== 'active') return;
+    const id = this.current.id;
+
+    // M3: the clock runs down; hitting zero fails the job.
+    if (id === 3) {
+      this.timer -= dt;
+      if (this.timer <= 0) {
+        this.timer = 0;
+        this.fail('Out of time on Clockwork.');
+        return;
+      }
+    }
+
+    // M4 ambush (stage 1): no marker while fighting — the job advances
+    // when the last thug falls, then the escape marker appears.
+    if (id === 4 && this.stage === 1) {
+      const alive = g.combat.thugs.some((t) => !t.dead);
+      if (!alive && g.combat.thugs.length > 0) {
+        this.stage = 2;
+        this.setMarkerFor(4, 1);
+        g.police.addWanted(3);
+        g.say('Ambush cleared — escape to the safehouse at 3 stars!');
+        g.audio.sting();
+      }
       return;
     }
-  }
-  if (m.id === 1) {
-    if (m.stage === 'steal' && G.inCar) {
-      m.stage = 'drive';
-      setMarker(G, G.city.plaza.x, G.city.plaza.z);
-      G.hud.objective('Drive to the plaza marker');
-    } else if (m.stage === 'drive' && near(G, G.city.plaza.x, G.city.plaza.z, 10)) {
-      // 10 m, not 6: the plaza fountain's collider keeps a car ~7 m out.
-      completeMission(G);
-    }
-  } else if (m.id === 2) {
-    if (m.stage === 'pickup' && near(G, G.city.docks.x, G.city.docks.z, 6)) {
-      m.stage = 'escape';
-      setMarker(G, G.city.safehouse.x, G.city.safehouse.z);
-      G.hud.objective('Package grabbed — reach the safehouse, lose the heat!');
-      if (G.wanted < 2) {
-        G.wanted = 2;
-        G.audio.siren(true);
+
+    if (!this.reachedMarker()) return;
+
+    if (id === 1) {
+      // M1 needs the player to arrive in a car.
+      if (g.player.inCar) this.complete();
+      else g.say('Get in a car and drive into the marker.');
+    } else if (id === 2) {
+      if (this.stage === 0) {
+        // Picked up the package: the heat is on, head for the safehouse.
+        this.stage = 1;
+        this.setMarkerFor(2, 1);
+        g.police.addWanted(2);
+        g.say('Package grabbed — reach the safehouse, lose the heat!');
+        g.audio.sting();
+      } else {
+        this.complete();
       }
-    } else if (m.stage === 'escape' && near(G, G.city.safehouse.x, G.city.safehouse.z, 6)) {
-      completeMission(G);
-    }
-  } else if (m.id === 3) {
-    if (m.stage === 'deliver' && near(G, G.city.northGate.x, G.city.northGate.z, 6)) {
-      completeMission(G);
-    }
-  } else if (m.id === 4) {
-    if (m.stage === 'meet' && !G.inCar && near(G, G.city.park.x, G.city.park.z, 5)) {
-      m.stage = 'ambush';
-      G.missions.enemiesLeft = 3;
-      const px = G.city.park.x;
-      const pz = G.city.park.z;
-      spawnEnemy(G, G.scene, px + 12, pz - 8);
-      spawnEnemy(G, G.scene, px - 10, pz + 10);
-      spawnEnemy(G, G.scene, px + 4, pz + 14);
-      G.combat.weapon = 'pistol';
-      G.hud.objective('AMBUSH! Take down all three gunmen!');
-      G.audio.sting();
-      if (G.wanted < 1) G.wanted = 1;
-    } else if (m.stage === 'escape' && near(G, G.city.safehouse.x, G.city.safehouse.z, 6)) {
-      completeMission(G);
-      G.wanted = 0;
+    } else if (id === 3) {
+      this.complete();
+    } else if (id === 4) {
+      if (this.stage === 0) {
+        if (g.player.inCar) {
+          g.say('On foot, Rico — leave the car and walk into the park.');
+          return;
+        }
+        // The ambush: three thugs step out with pistols.
+        this.stage = 1;
+        this.beacon.visible = false;
+        this.marker = null;
+        g.combat.spawnThugs(PLACES.park.x, PLACES.park.z, 3);
+        g.police.addWanted(1);
+        g.say('It is a setup! Take down the three thugs!');
+        g.audio.fail();
+      } else if (this.stage === 2) {
+        this.complete();
+      }
     }
   }
-  // Spinning ring under the marker, and pickups collected on the way.
-  if (G.missions.ring.visible) G.missions.ring.rotation.z += dt * 1.5;
-  for (const p of G.city.pickups) {
-    if (p.taken) continue;
-    const px = G.inCar ? G.car.x : G.player.x;
-    const pz = G.inCar ? G.car.z : G.player.z;
-    if (Math.hypot(px - p.x, pz - p.z) < 3) {
-      p.taken = true;
-      p.mesh.visible = false;
-      G.cash += ECONOMY.pickupValue;
-      G.hud.toast(`+$${ECONOMY.pickupValue} cash pickup`);
-      G.audio.blip();
+
+  // Objective line for the HUD.
+  objectiveText() {
+    if (this.current && this.phase === 'active') {
+      const def = this.current;
+      if (def.id === 2 && this.stage === 1) return 'JOB 2: The Getaway — reach the safehouse';
+      if (def.id === 4 && this.stage === 1) return 'JOB 4: The Informant — survive the ambush';
+      if (def.id === 4 && this.stage === 2) return 'JOB 4: The Informant — escape to the safehouse';
+      return `JOB ${def.id}: ${def.name} — ${def.objective}`;
     }
+    if (this.done.length >= 4) return 'All jobs done — talk to Delgado for the Big One';
+    return 'No active job — open the pause menu (P) to start a mission';
   }
 }

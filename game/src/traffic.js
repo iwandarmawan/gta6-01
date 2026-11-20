@@ -1,130 +1,128 @@
-// Traffic: cars that follow the road lanes, stop at junctions, and keep a
-// loose gap to the car ahead. Each one drives along one road line, turns at
-// intersections, and despawns far behind the player to respawn ahead — the
-// city always feels busy without ever simulating the whole grid.
-import { TRAFFIC } from './config.js';
-import { createCarMesh, randomCar } from './cars.js';
-import { resolveCircle } from './city.js';
+// Solmar Bay — traffic: cars that follow the road lanes, pause at
+// junctions, and slow down for the player instead of ramming them.
+// Traffic cars are ordinary Cars driven by a simple waypoint pilot.
 
-function spawnSpot(G, rng, near) {
-  // A road line near the player (or anywhere at boot), on a random lane.
-  const lines = G.city.roads;
-  const line = rng.pick(lines);
-  const along = near
-    ? near + rng.range(-90, 90)
-    : rng.range(-G.city.half + 20, G.city.half - 20);
-  const lane = rng.chance(0.5) ? 3 : -3;
-  if (rng.chance(0.5)) return { x: along, z: line + lane, angle: rng.chance(0.5) ? 0 : Math.PI };
-  return { x: line + lane, z: along, angle: rng.chance(0.5) ? Math.PI / 2 : -Math.PI / 2 };
-}
+import { WORLD, clamp, dist2 } from './config.js';
+import { Car } from './cars.js';
 
-export function createTraffic(G, scene, rng) {
-  const cars = [];
-  for (let i = 0; i < TRAFFIC.count; i += 1) {
-    const spot = spawnSpot(G, rng, null);
-    const spec = randomCar(rng);
-    const mesh = createCarMesh(spec.color, spec.shape);
-    mesh.position.set(spot.x, 0, spot.z);
-    mesh.rotation.y = -spot.angle;
-    scene.add(mesh);
-    cars.push({
-      mesh, x: spot.x, z: spot.z, angle: spot.angle,
-      speed: rng.range(TRAFFIC.speed * 0.7, TRAFFIC.speed * 1.1),
-      wait: 0, shape: spec.shape,
-    });
+export class Traffic {
+  constructor(scene, rng, colliders) {
+    this.scene = scene;
+    this.rng = rng;
+    this.colliders = colliders;
+    this.cars = [];
+    // Road centrelines, for picking routes.
+    this.roads = [];
+    for (let k = -WORLD.GRID; k <= WORLD.GRID; k += 1) this.roads.push(k * WORLD.PITCH);
   }
-  return { cars };
-}
 
-function nearestAhead(G, car) {
-  // The closest traffic car ahead on the same lane, if any.
-  let best = null;
-  let bestD = TRAFFIC.minGap;
-  for (const other of G.traffic.cars) {
-    if (other === car) continue;
-    const dx = other.x - car.x;
-    const dz = other.z - car.z;
-    const forward = dx * Math.cos(car.angle) + dz * Math.sin(car.angle);
-    const side = Math.abs(-dx * Math.sin(car.angle) + dz * Math.cos(car.angle));
-    if (forward > 0 && forward < bestD && side < 3) {
-      best = other;
-      bestD = forward;
+  spawn(count) {
+    for (let i = 0; i < count; i += 1) {
+      const car = this.spawnOne();
+      if (car) this.cars.push(car);
     }
   }
-  return best;
-}
 
-export function stepTraffic(G, dt) {
-  const player = G.inCar ? { x: G.car.x, z: G.car.z } : { x: G.player.x, z: G.player.z };
-  for (const car of G.traffic.cars) {
-    // Far behind the player: recycle ahead so the streets stay busy.
-    const dx = car.x - player.x;
-    const dz = car.z - player.z;
-    if (dx * dx + dz * dz > 260 * 260) {
-      const spot = spawnSpot(G, G.rng, null);
-      car.x = spot.x;
-      car.z = spot.z;
-      car.angle = spot.angle;
-      car.wait = 0;
+  // One traffic car on a random road, heading along it, with a route of
+  // waypoints that turns at junctions.
+  spawnOne() {
+    const horizontal = this.rng.chance(0.5);
+    const road = this.rng.pick(this.roads);
+    const along = this.rng.range(-WORLD.CITY_HALF + 20, WORLD.CITY_HALF - 20);
+    const x = horizontal ? along : road + (this.rng.chance(0.5) ? 3.2 : -3.2);
+    const z = horizontal ? road + (this.rng.chance(0.5) ? 3.2 : -3.2) : along;
+    const heading = horizontal
+      ? (this.rng.chance(0.5) ? Math.PI / 2 : -Math.PI / 2)
+      : (this.rng.chance(0.5) ? 0 : Math.PI);
+    const car = new Car(this.scene, this.rng, x, z, heading, false);
+    car.cruise = this.rng.range(7, 11);
+    car.route = this.makeRoute(x, z, heading);
+    car.routeIndex = 0;
+    car.wait = 0;
+    return car;
+  }
+
+  // A route is a list of road waypoints: drive along the current road to a
+  // random junction, turn onto the cross road, repeat.
+  makeRoute(x, z, heading) {
+    const route = [];
+    let px = x;
+    let pz = z;
+    let dir = Math.round(heading / (Math.PI / 2)) % 4;
+    for (let i = 0; i < 6; i += 1) {
+      const len = this.rng.range(60, 160);
+      const dx = dir === 1 ? 1 : dir === 3 ? -1 : 0;
+      const dz = dir === 0 ? 1 : dir === 2 ? -1 : 0;
+      px = clamp(px + dx * len, -WORLD.CITY_HALF + 10, WORLD.CITY_HALF - 10);
+      pz = clamp(pz + dz * len, -WORLD.CITY_HALF + 10, WORLD.CITY_HALF - 10);
+      route.push({ x: px, z: pz });
+      // Turn left or right at the next junction.
+      dir = (dir + (this.rng.chance(0.5) ? 1 : 3)) % 4;
     }
-    // Junction pause: sometimes wait a beat at an intersection.
-    const nearJunction = G.city.roads.some((p) => Math.abs(car.x - p) < 4 && Math.abs(car.z - p) < 4);
-    if (car.wait > 0) {
-      car.wait -= dt;
-      continue;
-    }
-    if (nearJunction && G.rng.chance(0.004)) {
-      car.wait = G.rng.range(0.8, 2.2);
-      continue;
-    }
-    if (nearestAhead(G, car)) continue;
-    // Ease off near a junction so the flow reads as city driving, not a race.
-    const approachingJunction = G.city.roads.some((p) => Math.abs(car.x - p) < 10 && Math.abs(car.z - p) < 10);
-    const cruise = approachingJunction ? car.speed * 0.5 : car.speed;
-    // Panic brake if the player is right in front of us — and honk about it.
-    const pdx = player.x - car.x;
-    const pdz = player.z - car.z;
-    const pForward = pdx * Math.cos(car.angle) + pdz * Math.sin(car.angle);
-    const pSide = Math.abs(-pdx * Math.sin(car.angle) + pdz * Math.cos(car.angle));
-    if (pForward > 0 && pForward < 10 && pSide < 3) {
-      if (!car.honked) {
-        car.honked = true;
-        G.audio.horn();
+    return route;
+  }
+
+  update(dt, playerX, playerZ) {
+    for (const car of this.cars) {
+      if (car.dead) continue;
+      const target = car.route[car.routeIndex];
+      if (!target) {
+        car.route = this.makeRoute(car.x, car.z, car.heading);
+        car.routeIndex = 0;
+        continue;
       }
-      continue;
+      const d = dist2(car.x, car.z, target.x, target.z);
+      if (d < 4) {
+        car.routeIndex += 1;
+        car.wait = 0.4; // brief pause at the junction, like a real driver
+        continue;
+      }
+      // Slow down for the player when they are right ahead; a traffic car
+      // stuck behind the player flags itself so the game can honk at them.
+      const playerAhead = dist2(car.x, car.z, playerX, playerZ) < 14;
+      car.blockedByPlayer = playerAhead;
+      const want = Math.atan2(target.x - car.x, target.z - car.z);
+      let diff = want - car.heading;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      const steer = clamp(diff * 1.4, -1, 1);
+      if (car.wait > 0) {
+        car.wait -= dt;
+        car.drive(dt, 0, 0, this.colliders);
+      } else {
+        const throttle = playerAhead ? 0.15 : clamp((car.cruise - car.speed) / 4, 0, 1);
+        car.drive(dt, throttle, steer, this.colliders);
+      }
+      // Keep the car on the road: if it drifted far off, respawn it.
+      if (Math.abs(car.x) > WORLD.CITY_HALF + 30 || Math.abs(car.z) > WORLD.CITY_HALF + 30) {
+        this.respawn(car);
+      }
     }
-    car.honked = false;
-    const nx = car.x + Math.cos(car.angle) * cruise * dt;
-    const nz = car.z + Math.sin(car.angle) * cruise * dt;
-    const fixed = resolveCircle(G.city, nx, nz, 2.3);
-    if (fixed.x === nx && fixed.z === nz) {
-      car.x = nx;
-      car.z = nz;
-    } else {
-      // Blocked by a building (should not happen on roads): turn around.
-      car.angle += Math.PI;
-    }
-    // At an intersection, sometimes turn onto the crossing road.
-    const atCross = G.city.roads.some((p) => Math.abs(car.x - p) < 2) && G.city.roads.some((p) => Math.abs(car.z - p) < 2);
-    if (atCross && G.rng.chance(0.02)) car.angle += G.rng.chance(0.5) ? Math.PI / 2 : -Math.PI / 2;
-    car.mesh.position.set(car.x, 0, car.z);
-    car.mesh.rotation.y = -car.angle;
-    for (const w of car.mesh.userData.wheels) w.rotation.x += car.speed * dt * 2.4;
   }
-}
 
-/** The nearest traffic car to (x, z) within `maxDist`, or null. */
-export function nearestTrafficCar(G, x, z, maxDist) {
-  let best = null;
-  let bestD = maxDist;
-  for (const car of G.traffic.cars) {
-    const dx = car.x - x;
-    const dz = car.z - z;
-    const d = Math.sqrt(dx * dx + dz * dz);
-    if (d < bestD) {
-      best = car;
-      bestD = d;
-    }
+  respawn(car) {
+    const fresh = this.spawnOne();
+    car.x = fresh.x;
+    car.z = fresh.z;
+    car.heading = fresh.heading;
+    car.speed = 0;
+    car.blockedByPlayer = false;
+    car.route = fresh.route;
+    car.routeIndex = 0;
+    car.group.position.set(car.x, 0, car.z);
+    car.group.rotation.y = car.heading;
+    fresh.remove(this.scene);
   }
-  return best;
+
+  // Nearest traffic car to a point (for stealing: the player grabs it).
+  nearest(x, z, maxDist) {
+    let best = null;
+    let bestD = maxDist;
+    for (const car of this.cars) {
+      if (car.dead) continue;
+      const d = dist2(car.x, car.z, x, z);
+      if (d < bestD) { bestD = d; best = car; }
+    }
+    return best;
+  }
 }

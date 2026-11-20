@@ -1,143 +1,97 @@
-// The screenshot scenes behind ?shot=start|play|chase|mission. Each one
-// poses the real game state at a fixed, seeded moment — a real car on a
-// real avenue, a real pistol with a real muzzle flash, a real 3-star chase
-// — and the renderer paints it, so the frame is what playing the game
-// really looks like and the same seed always gives the same frame.
-import { createPlayerCar } from './cars.js';
-import { startMission } from './missions.js';
-import { forcePoliceCar } from './police.js';
+// Solmar Bay — screenshot scenes behind ?shot=start|play|chase|mission.
+// Each scene stages a real game state (real mission, real wanted level,
+// real cars and police) and freezes it, so the frame is what the game
+// actually looks like and the same seed always gives the same frame.
 
-/** Put Rico's on-foot mesh where the state says he stands. */
-function syncPlayerMesh(G) {
-  const p = G.player;
-  G.playerMesh.visible = !G.inCar;
-  G.playerMesh.position.set(p.x, p.y || 0, p.z);
-  G.playerMesh.rotation.y = -p.angle + Math.PI / 2;
+import { PLACES } from './config.js';
+
+// Put the player in a car at (x, z) facing `heading`, engine running.
+function stageInCar(game, x, z, heading, speed = 0) {
+  const car = game.parked[0];
+  car.x = x;
+  car.z = z;
+  car.heading = heading;
+  car.speed = speed;
+  car.group.position.set(x, 0, z);
+  car.group.rotation.y = heading;
+  game.player.inCar = true;
+  game.player.car = car;
+  game.player.x = x;
+  game.player.z = z;
+  game.player.heading = heading;
+  game.playerMesh.visible = false;
+  game.renderer.snap(game.player);
 }
 
-export function stageShot(name, G) {
-  G.mode = 'play';
-  G.hud.showPanel(null);
-  G.player.health = 100;
-  if (name === 'play') return stagePlay(G);
-  if (name === 'chase') return stageChase(G);
-  if (name === 'mission') return stageMission(G);
-  return stageStart(G);
-}
+export function stageShot(game, name) {
+  game.state = 'playing';
+  game.hud.hideTitle();
+  game.audio.setMuted(true); // screenshots never need sound
+  // Each scene shows a different time of day on the HUD clock.
+  const sceneTimes = { start: 120, play: 480, chase: 900, mission: 360 };
+  game.time = sceneTimes[name] ?? 120;
 
-function stageStart(G) {
-  // Cover: Rico's red sedan on the sun-soaked central avenue, skyline and
-  // palms ahead, the plaza marker in the distance, full HUD and minimap.
-  // The car sits on the road west of the plaza (clear of the lamp posts),
-  // and the camera rides higher so the asphalt does not eat the frame.
-  const car = createPlayerCar(G.scene, -64, -48, 0, 0xd84a4a, 'sedan');
-  G.car = car;
-  G.inCar = true;
-  G.player.x = car.x;
-  G.player.z = car.z;
-  G.player.angle = car.angle;
-  G.shotCam = { dist: 16, height: 7 };
-  G.wanted = 0;
-  G.cash = 250;
-  startMission(G, 1);
-  G.mission.stage = 'drive';
-  G.hud.objective('Drive to the plaza marker');
-  syncPlayerMesh(G);
-  G.hud.update(G, 1 / 60);
-}
+  if (name === 'play') {
+    // On foot in the plaza, pistol out, one star, two peds fleeing, M4 live.
+    game.debugTeleport(PLACES.plaza.x - 6, PLACES.plaza.z + 10, Math.PI * 0.9);
+    game.combat.setWeapon('pistol');
+    game.combat.mag = 9;
+    game.combat.reserve = 48;
+    game.debugSetWanted(1);
+    game.debugStartMission(4);
+    game.peds.scare(game.player.x, game.player.z, 18);
+    // Two peds right in front of the player (forward is mostly -z here),
+    // mid-flee from the gunfire.
+    const p1 = game.peds.peds[0];
+    const p2 = game.peds.peds[1];
+    p1.x = game.player.x + 4; p1.z = game.player.z - 8; p1.fleeing = 3;
+    p2.x = game.player.x - 5; p2.z = game.player.z - 10; p2.fleeing = 3;
+    game.peds.update(0.1);
+    game.renderer.snap(game.player);
+    game.hud.update(0.1);
+    return;
+  }
 
-function stagePlay(G) {
-  // Combat in the plaza: Rico on foot, pistol drawn, a fresh muzzle flash,
-  // a pedestrian fleeing, traffic passing, the marker down the avenue.
-  G.player.x = G.city.plaza.x + 8;
-  G.player.z = G.city.plaza.z + 10;
-  G.player.angle = Math.PI / 2;
-  G.inCar = false;
-  G.combat.weapon = 'pistol';
-  G.combat.mag = 9;
-  G.wanted = 1;
-  G.cash = 300;
-  startMission(G, 4);
-  G.mission.stage = 'meet';
-  G.hud.objective('Meet the informant in the park — on foot');
-  // Two pedestrians right in front of Rico, already running for it.
-  const ped = G.peds.peds[0];
-  ped.x = G.player.x + 2;
-  ped.z = G.player.z + 5;
-  ped.fleeing = 5;
-  ped.target = { x: ped.x + 26, z: ped.z + 18 };
-  ped.mesh.position.set(ped.x, 0, ped.z);
-  ped.mesh.rotation.y = -Math.PI / 4;
-  const ped2 = G.peds.peds[1];
-  ped2.x = G.player.x - 3;
-  ped2.z = G.player.z + 7;
-  ped2.fleeing = 5;
-  ped2.target = { x: ped2.x - 20, z: ped2.z + 24 };
-  ped2.mesh.position.set(ped2.x, 0, ped2.z);
-  ped2.mesh.rotation.y = Math.PI / 3;
-  // One shot fired a blink ago, so the muzzle flash is lit in the frame:
-  // at the gun, just ahead of Rico's right hand.
-  G.combat.flashTimer = 0.07;
-  G.combat.flash.visible = true;
-  G.combat.flash.position.set(G.player.x - 0.3, 1.4, G.player.z + 0.9);
-  G.combat.flashLight.position.copy(G.combat.flash.position);
-  G.combat.flashLight.intensity = 6;
-  // The pistol itself: the game loop normally puts it in Rico's hand, but
-  // the screenshot pose paints without stepping, so pose it here too.
-  const a = G.player.angle;
-  G.combat.pistol.visible = true;
-  G.combat.pistol.position.set(
-    G.player.x + Math.cos(a) * 0.45 - Math.sin(a) * 0.3,
-    1.25,
-    G.player.z + Math.sin(a) * 0.45 + Math.cos(a) * 0.3,
-  );
-  G.combat.pistol.rotation.y = -a;
-  syncPlayerMesh(G);
-  G.hud.update(G, 1 / 60);
-}
+  if (name === 'chase') {
+    // Police chase: 3 stars, two police cars right behind, M2 live.
+    stageInCar(game, 0, 120, Math.PI, 22);
+    game.debugSetWanted(3);
+    game.debugStartMission(2);
+    game.missions.stage = 1;
+    game.missions.setMarkerFor(2, 1);
+    game.police.update(0.5);
+    // Pull two police cars in close for the shot, flanking ahead of the
+    // player where the chase camera can see them (cops right behind the
+    // player fall behind the camera and vanish from the frame).
+    const cops = game.police.cars;
+    if (cops[0]) {
+      cops[0].x = game.player.x - 6; cops[0].z = game.player.z - 14;
+      cops[0].heading = game.player.heading;
+      cops[0].group.position.set(cops[0].x, 0, cops[0].z);
+    }
+    if (cops[1]) {
+      cops[1].x = game.player.x + 7; cops[1].z = game.player.z - 18;
+      cops[1].heading = game.player.heading;
+      cops[1].group.position.set(cops[1].x, 0, cops[1].z);
+    }
+    game.renderer.snap(game.player);
+    game.hud.update(0.1);
+    return;
+  }
 
-function stageChase(G) {
-  // Three stars, two police cars closing in behind Rico's blue sedan,
-  // light bars flashing, the siren on. The camera rides high and far so
-  // the pursuit reads: the cops sit just behind Rico, one to each side.
-  const car = createPlayerCar(G.scene, 0, -48, 0, 0x4a7fd8, 'sedan');
-  G.car = car;
-  G.inCar = true;
-  G.player.x = car.x;
-  G.player.z = car.z;
-  G.player.angle = car.angle;
-  car.speed = 26;
-  G.shotCam = { dist: 24, height: 10 };
-  G.wanted = 3;
-  G.cash = 550;
-  startMission(G, 2);
-  G.mission.stage = 'escape';
-  G.hud.objective('Package grabbed — reach the safehouse, lose the heat!');
-  const cop1 = forcePoliceCar(G, G.scene, -10, -40, 0);
-  const cop2 = forcePoliceCar(G, G.scene, -10, -56, 0.1);
-  cop1.speed = 30;
-  cop2.speed = 28;
-  cop1.mesh.userData.lightRed.visible = true;
-  cop2.mesh.userData.lightBlue.visible = true;
-  syncPlayerMesh(G);
-  G.hud.update(G, 1 / 60);
-}
+  if (name === 'mission') {
+    // M3 Clockwork mid-delivery: countdown at 1:12, car mid-turn, 79 km/h.
+    stageInCar(game, 108, 108, Math.PI * 0.75, 22);
+    game.debugStartMission(3);
+    game.missions.timer = 72; // 1:12 on the clock
+    game.renderer.snap(game.player);
+    game.hud.update(0.1);
+    return;
+  }
 
-function stageMission(G) {
-  // Mission 3 mid-delivery: 72 seconds left on the HUD countdown, the
-  // waypoint beam ahead, Rico's yellow hatchback mid-turn toward it.
-  const car = createPlayerCar(G.scene, -120, 48, -Math.PI / 4, 0xf2c94c, 'hatch');
-  G.car = car;
-  G.inCar = true;
-  G.player.x = car.x;
-  G.player.z = car.z;
-  G.player.angle = car.angle;
-  car.speed = 22;
-  G.wanted = 0;
-  G.cash = 300;
-  startMission(G, 3);
-  G.mission.timer = 72;
-  G.hud.objective('Deliver across the city — 90 seconds!');
-  syncPlayerMesh(G);
-  G.hud.update(G, 1 / 60);
+  // Default (start): the cover — red sedan on the central avenue, M1 live.
+  stageInCar(game, 0, 162, Math.PI, 0);
+  game.debugStartMission(1);
+  game.renderer.snap(game.player);
+  game.hud.update(0.1);
 }

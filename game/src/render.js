@@ -1,98 +1,112 @@
-// Rendering: the three.js scene, the chase camera, and Rico Vega's on-foot
-// mesh. The camera trails behind the car while driving and behind Rico on
-// foot, lerped so it never snaps; it also looks toward the mission marker
-// during the cover shot. Shadows stay on — the sun is the city's whole look.
-const THREE = window.THREE;
-import { CAMERA } from './config.js';
+// Solmar Bay — three.js renderer: scene, sun, sky, fog and the cameras.
+// Two cameras in one: a low chase cam behind the car, and a closer
+// third-person cam on foot. Both smooth-follow the player and shake on
+// hard hits, so crashes feel like crashes.
 
-export function createPlayerMesh() {
-  const group = new THREE.Group();
-  const jacket = new THREE.MeshLambertMaterial({ color: 0x2a6aff });
-  const jeans = new THREE.MeshLambertMaterial({ color: 0x2b3a55 });
-  const skin = new THREE.MeshLambertMaterial({ color: 0xe8b88a });
-  const body = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.9, 0.36), jacket);
-  body.position.y = 1.05;
-  body.castShadow = true;
-  group.add(body);
-  const head = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.44, 0.44), skin);
-  head.position.y = 1.74;
-  head.castShadow = true;
-  group.add(head);
-  const cap = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.14, 0.48), new THREE.MeshLambertMaterial({ color: 0xd84a4a }));
-  cap.position.y = 1.98;
-  group.add(cap);
-  const legL = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.68, 0.22), jeans);
-  legL.position.set(-0.15, 0.34, 0);
-  group.add(legL);
-  const legR = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.68, 0.22), jeans);
-  legR.position.set(0.15, 0.34, 0);
-  group.add(legR);
-  const armL = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.62, 0.17), jacket);
-  armL.position.set(-0.4, 1.05, 0);
-  group.add(armL);
-  const armR = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.62, 0.17), jacket);
-  armR.position.set(0.4, 1.05, 0);
-  group.add(armR);
-  group.userData = { legL, legR, armL, armR };
-  return group;
-}
+import { COLORS, WORLD } from './config.js';
 
-export function createRenderer(canvas) {
-  const lowfx = new URLSearchParams(window.location.search).get('lowfx') === '1';
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: !lowfx });
-  renderer.setPixelRatio(lowfx ? 1 : Math.min(window.devicePixelRatio || 1, 2));
-  // Low-fx mode (slow machines, software rendering): no shadows, half the
-  // pixel work — the game still plays the same.
-  renderer.shadowMap.enabled = !lowfx;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(CAMERA.fov, 1, CAMERA.near, CAMERA.far);
-  const camPos = new THREE.Vector3(0, 8, -14);
-  const camLook = new THREE.Vector3(0, 1, 0);
+const T = window.THREE;
 
-  function resize() {
-    const w = window.innerWidth;
-    const h = window.innerHeight;
-    renderer.setSize(w, h, false);
-    camera.aspect = w / h;
-    camera.updateProjectionMatrix();
+export class Renderer3D {
+  constructor(canvas) {
+    this.canvas = canvas;
+    this.renderer = new T.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = T.PCFSoftShadowMap;
+
+    this.scene = new T.Scene();
+    this.scene.background = new T.Color(COLORS.sky);
+    this.scene.fog = new T.Fog(COLORS.fog, 120, 620);
+
+    // Sun: a warm directional light with shadows over the whole city.
+    const sun = new T.DirectionalLight(COLORS.sun, 1.35);
+    sun.position.set(180, 260, 120);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.camera.left = -320;
+    sun.shadow.camera.right = 320;
+    sun.shadow.camera.top = 320;
+    sun.shadow.camera.bottom = -320;
+    sun.shadow.camera.far = 800;
+    this.scene.add(sun);
+    // Hemisphere fill so the shadowed sides are never pitch black.
+    this.scene.add(new T.HemisphereLight(0xbfd8ff, 0x8a7a5a, 0.75));
+
+    this.camera = new T.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 1200);
+    this.camera.position.set(0, 30, 80);
+
+    this.shakeAmount = 0;
+    this.camPos = new T.Vector3(0, 30, 80);
+    this.camLook = new T.Vector3(0, 0, 0);
+
+    window.addEventListener('resize', () => {
+      this.renderer.setSize(window.innerWidth, window.innerHeight);
+      this.camera.aspect = window.innerWidth / window.innerHeight;
+      this.camera.updateProjectionMatrix();
+    });
   }
-  resize();
-  window.addEventListener('resize', resize);
 
-  /** Trail the player: high and far behind the car, closer behind Rico.
-   * A staged shot may override the distance/height (G.shotCam). */
-  function updateCamera(G, dt) {
-    const px = G.inCar ? G.car.x : G.player.x;
-    const pz = G.inCar ? G.car.z : G.player.z;
-    const heading = G.inCar ? G.car.angle : G.player.angle;
-    const speed = G.inCar ? Math.abs(G.car.speed) : 0;
-    const dist = G.shotCam ? G.shotCam.dist : G.inCar ? 13 + speed * 0.12 : 8.5;
-    const height = G.shotCam ? G.shotCam.height : G.inCar ? 5.2 + speed * 0.04 : 3.6;
-    const tx = px - Math.cos(heading) * dist;
-    const tz = pz - Math.sin(heading) * dist;
-    const k = Math.min(1, 5 * dt);
-    camPos.x += (tx - camPos.x) * k;
-    camPos.y += (height - camPos.y) * k;
-    camPos.z += (tz - camPos.z) * k;
-    const lx = px + Math.cos(heading) * 20;
-    const lz = pz + Math.sin(heading) * 20;
-    camLook.x += (lx - camLook.x) * k;
-    camLook.y += (1.4 - camLook.y) * k;
-    camLook.z += (lz - camLook.z) * k;
-    camera.position.copy(camPos);
-    camera.lookAt(camLook);
-    // Crash shake: a hard hit rattles the camera for a beat.
-    if (G.shake > 0) {
-      G.shake = Math.max(0, G.shake - dt);
-      camera.position.x += (Math.random() - 0.5) * G.shake * 1.2;
-      camera.position.y += (Math.random() - 0.5) * G.shake * 0.8;
+  shake(amount) {
+    this.shakeAmount = Math.max(this.shakeAmount, amount);
+  }
+
+  // Follow the player: behind the car when driving, over the shoulder on
+  // foot. The camera lerps, so turns feel smooth instead of snappy.
+  follow(dt, player) {
+    const heading = player.heading;
+    const hx = Math.sin(heading);
+    const hz = Math.cos(heading);
+    let dist = 8.5;
+    let height = 3.4;
+    let lookAhead = 7;
+    let lookHeight = 1.6;
+    if (player.inCar && player.car) {
+      const speed = Math.abs(player.car.speed);
+      dist = 9.5 + speed * 0.22;
+      height = 4.2 + speed * 0.05;
+      lookAhead = 10;
     }
+    const tx = player.x - hx * dist;
+    const tz = player.z - hz * dist;
+    const k = 1 - Math.pow(0.0001, dt); // frame-rate independent smoothing
+    this.camPos.x += (tx - this.camPos.x) * k;
+    this.camPos.y += (height - this.camPos.y) * k;
+    this.camPos.z += (tz - this.camPos.z) * k;
+    // Keep the camera out of buildings: lift it when it would clip a roof.
+    if (this.camPos.y < 2.2) this.camPos.y = 2.2;
+    const lx = player.x + hx * lookAhead;
+    const lz = player.z + hz * lookAhead;
+    this.camLook.x += (lx - this.camLook.x) * k;
+    this.camLook.y += (lookHeight - this.camLook.y) * k;
+    this.camLook.z += (lz - this.camLook.z) * k;
+
+    let sx = 0;
+    let sy = 0;
+    if (this.shakeAmount > 0.01) {
+      sx = (Math.random() - 0.5) * this.shakeAmount;
+      sy = (Math.random() - 0.5) * this.shakeAmount;
+      this.shakeAmount *= Math.pow(0.02, dt);
+    }
+    this.camera.position.set(this.camPos.x + sx, this.camPos.y + sy, this.camPos.z);
+    this.camera.lookAt(this.camLook.x, this.camLook.y, this.camLook.z);
   }
 
-  function render() {
-    renderer.render(scene, camera);
+  // Snap the camera behind the player instantly (spawn, respawn, shots).
+  // Any leftover shake dies here: a fresh view never starts mid-tremor.
+  snap(player) {
+    this.shakeAmount = 0;
+    const hx = Math.sin(player.heading);
+    const hz = Math.cos(player.heading);
+    const dist = player.inCar ? 10 : 8.5;
+    this.camPos.set(player.x - hx * dist, player.inCar ? 4.2 : 3.4, player.z - hz * dist);
+    this.camLook.set(player.x + hx * 8, 1.6, player.z + hz * 8);
+    this.camera.position.copy(this.camPos);
+    this.camera.lookAt(this.camLook);
   }
 
-  return { renderer, scene, camera, updateCamera, render, resize };
+  render() {
+    this.renderer.render(this.scene, this.camera);
+  }
 }
