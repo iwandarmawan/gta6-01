@@ -1,271 +1,140 @@
-// cars.js — Solmar Bay vehicles: low-poly car models and arcade driving.
-// A car is a THREE.Group with a body, cabin, four wheels and lights, plus a
-// small physics state (position, heading, speed, steering, damage).
-(function (global) {
-  'use strict';
+// Cars: boxy low-poly bodies in several colours and shapes, plus the
+// player's arcade driving. A car is a THREE.Group with a body, a cabin, four
+// wheels and two headlights; the group carries its live state in userData so
+// traffic, police and the player all drive the same shape of object.
+const THREE = window.THREE;
+import { CAR } from './config.js';
+import { resolveCircle } from './city.js';
 
-  // Body styles the city spawns: length, width, cabin size, top speed.
-  const TYPES = {
-    sedan: { len: 4.4, wid: 1.9, cabLen: 2.2, cabH: 0.65, top: 34, accel: 13 },
-    coupe: { len: 4.0, wid: 1.85, cabLen: 1.8, cabH: 0.55, top: 38, accel: 15 },
-    van: { len: 5.0, wid: 2.1, cabLen: 3.4, cabH: 0.9, top: 28, accel: 10 },
-    truck: { len: 5.6, wid: 2.2, cabLen: 1.6, cabH: 0.9, top: 26, accel: 9 },
-    taxi: { len: 4.4, wid: 1.9, cabLen: 2.2, cabH: 0.65, top: 34, accel: 13 },
-    police: { len: 4.5, wid: 1.95, cabLen: 2.2, cabH: 0.65, top: 40, accel: 16 },
-  };
-  const PAINTS = [0xc0392b, 0x2e6db4, 0x27ae60, 0xf2d05a, 0x8e44ad, 0xe67e22, 0x7f8c8d, 0x1a1a1a, 0xe8e8e8, 0x16a085];
+const BODY_COLORS = [0xd84a4a, 0x4a7fd8, 0xf2c94c, 0x39d353, 0xe8e8e8, 0x2b2b2b, 0xd87fd8, 0x7fd8d0];
+const BODY_SHAPES = ['sedan', 'hatch', 'pickup', 'van'];
 
-  const wheelGeo = new THREE.CylinderGeometry(0.36, 0.36, 0.28, 10);
-  const wheelMat = new THREE.MeshLambertMaterial({ color: 0x181818 });
-  const hubGeo = new THREE.CylinderGeometry(0.16, 0.16, 0.3, 8);
-  const hubMat = new THREE.MeshLambertMaterial({ color: 0xbbbbbb });
-  const glassMat = new THREE.MeshLambertMaterial({ color: 0x223344 });
-  const headMat = new THREE.MeshBasicMaterial({ color: 0xfff6c0 });
-  const tailMat = new THREE.MeshBasicMaterial({ color: 0xdd2222 });
-
-  function makeCarMesh(type, color) {
-    const spec = TYPES[type] || TYPES.sedan;
-    const g = new THREE.Group();
-    const paint = new THREE.MeshLambertMaterial({ color: color });
-    const L = spec.len;
-    const W = spec.wid;
-
-    const body = new THREE.Mesh(new THREE.BoxGeometry(W, 0.62, L), paint);
-    body.position.y = 0.55;
-    body.castShadow = true;
-    g.add(body);
-    const cabin = new THREE.Mesh(new THREE.BoxGeometry(W - 0.25, spec.cabH, spec.cabLen), glassMat);
-    cabin.position.set(0, 0.55 + 0.31 + spec.cabH / 2, type === 'truck' ? L / 2 - spec.cabLen / 2 - 0.3 : -0.2);
+/** Build a car mesh. `shape` picks the body style; `color` the paint. */
+export function createCarMesh(color, shape) {
+  const group = new THREE.Group();
+  const paint = new THREE.MeshLambertMaterial({ color });
+  const glass = new THREE.MeshLambertMaterial({ color: 0x1a2530 });
+  const dark = new THREE.MeshLambertMaterial({ color: 0x222222 });
+  const len = shape === 'van' ? 5.2 : shape === 'pickup' ? 4.8 : 4.4;
+  const bodyH = shape === 'van' ? 1.5 : 0.85;
+  const body = new THREE.Mesh(new THREE.BoxGeometry(2.1, bodyH, len), paint);
+  body.position.y = 0.75;
+  body.castShadow = true;
+  group.add(body);
+  if (shape !== 'pickup') {
+    const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.75, shape === 'van' ? 3.6 : 2.2), glass);
+    cabin.position.set(0, bodyH + 0.65, shape === 'van' ? -0.3 : -0.2);
     cabin.castShadow = true;
-    g.add(cabin);
-    if (type === 'truck') {
-      const bed = new THREE.Mesh(new THREE.BoxGeometry(W - 0.15, 0.5, L * 0.42),
-        new THREE.MeshLambertMaterial({ color: 0x5a5a5a }));
-      bed.position.set(0, 0.9, -L * 0.22);
-      g.add(bed);
-    }
-    if (type === 'taxi') {
-      const sign = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.22, 0.7),
-        new THREE.MeshBasicMaterial({ color: 0xf2d05a }));
-      sign.position.set(0, 0.55 + 0.62 + spec.cabH + 0.11, -0.2);
-      g.add(sign);
-    }
-    // Wheels: front pair steers, all four spin on their axle.
-    // Each wheel is a group (steering, around Y) holding a spinner group
-    // (rolling, around the axle X) holding the tyre and hub.
-    const wheels = [];
-    const wx = [-W / 2 + 0.05, W / 2 - 0.05];
-    const wz = [L / 2 - 0.85, -L / 2 + 0.85];
-    for (let i = 0; i < 2; i++) {
-      for (let j = 0; j < 2; j++) {
-        const wheel = new THREE.Group();
-        const spinner = new THREE.Group();
-        const tyre = new THREE.Mesh(wheelGeo, wheelMat);
-        tyre.rotation.z = Math.PI / 2;
-        const hub = new THREE.Mesh(hubGeo, hubMat);
-        hub.rotation.z = Math.PI / 2;
-        spinner.add(tyre);
-        spinner.add(hub);
-        wheel.add(spinner);
-        wheel.position.set(wx[j], 0.36, wz[i]);
-        wheel.castShadow = true;
-        g.add(wheel);
-        wheels.push({ node: wheel, spinner: spinner, front: i === 0 });
-      }
-    }
-    // Headlights and taillights.
-    for (const x of [-W / 2 + 0.35, W / 2 - 0.35]) {
-      const h = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.14, 0.08), headMat);
-      h.position.set(x, 0.62, L / 2 + 0.01);
-      g.add(h);
-      const t = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.14, 0.08), tailMat);
-      t.position.set(x, 0.62, -L / 2 - 0.01);
-      g.add(t);
-    }
-    g.userData.wheels = wheels;
-    g.userData.spec = spec;
-    return g;
+    group.add(cabin);
+  } else {
+    const bed = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.5, 2.2), dark);
+    bed.position.set(0, 1.05, -1.1);
+    group.add(bed);
   }
-
-  // A police light bar: two flashing boxes on the roof.
-  function makeLightBar() {
-    const bar = new THREE.Group();
-    const red = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.18, 0.5),
-      new THREE.MeshBasicMaterial({ color: 0xff2222 }));
-    red.position.z = -0.35;
-    const blue = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.18, 0.5),
-      new THREE.MeshBasicMaterial({ color: 0x2244ff }));
-    blue.position.z = 0.35;
-    bar.add(red);
-    bar.add(blue);
-    bar.userData.red = red;
-    bar.userData.blue = blue;
-    return bar;
+  const wheelGeo = new THREE.CylinderGeometry(0.42, 0.42, 0.35, 10);
+  const wheels = [];
+  for (const [wx, wz] of [[-1.0, 1.5], [1.0, 1.5], [-1.0, -1.5], [1.0, -1.5]]) {
+    const wheel = new THREE.Mesh(wheelGeo, dark);
+    wheel.rotation.z = Math.PI / 2;
+    wheel.position.set(wx, 0.42, wz);
+    group.add(wheel);
+    wheels.push(wheel);
   }
-
-  // Circle (the car) against an axis-aligned building box, pushed out.
-  // Returns the push vector, or null when there is no overlap.
-  function collideCircleAABB(x, z, r, box) {
-    const cx = Math.max(box.minX, Math.min(x, box.maxX));
-    const cz = Math.max(box.minZ, Math.min(z, box.maxZ));
-    const dx = x - cx;
-    const dz = z - cz;
-    const d2 = dx * dx + dz * dz;
-    if (d2 >= r * r) return null;
-    if (d2 > 0.0001) {
-      const d = Math.sqrt(d2);
-      return { x: (dx / d) * (r - d), z: (dz / d) * (r - d) };
-    }
-    // Centre inside the box: push out along the smallest axis.
-    const pushes = [
-      { x: box.minX - r - x, z: 0 },
-      { x: box.maxX + r - x, z: 0 },
-      { x: 0, z: box.minZ - r - z },
-      { x: 0, z: box.maxZ + r - z },
-    ];
-    let best = pushes[0];
-    for (const p of pushes) {
-      if (Math.abs(p.x) + Math.abs(p.z) < Math.abs(best.x) + Math.abs(best.z)) best = p;
-    }
-    return best;
+  const lightMat = new THREE.MeshBasicMaterial({ color: 0xfff2c0 });
+  for (const lx of [-0.7, 0.7]) {
+    const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.2, 0.1), lightMat);
+    lamp.position.set(lx, 0.8, len / 2 + 0.02);
+    group.add(lamp);
   }
+  // Brake lights: they glow red while the driver is on the brakes.
+  const brakeMat = new THREE.MeshBasicMaterial({ color: 0x550000 });
+  const brakeL = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.2, 0.1), brakeMat);
+  brakeL.position.set(-0.7, 0.8, -len / 2 - 0.02);
+  group.add(brakeL);
+  const brakeR = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.2, 0.1), brakeMat.clone());
+  brakeR.position.set(0.7, 0.8, -len / 2 - 0.02);
+  group.add(brakeR);
+  // Damage smoke: a grey cone that appears once the car is badly hurt.
+  const smoke = new THREE.Mesh(
+    new THREE.ConeGeometry(0.9, 2.4, 8),
+    new THREE.MeshLambertMaterial({ color: 0x777777, transparent: true, opacity: 0.55 }),
+  );
+  smoke.position.set(0, 2.2, len / 2 - 0.6);
+  smoke.visible = false;
+  group.add(smoke);
+  group.userData = { wheels, smoke, len, shape, brakeL, brakeR };
+  return group;
+}
 
-  // One car: mesh + arcade physics state. Drive with input {throttle, steer, handbrake}.
-  function makeCar(type, color, x, z, heading) {
-    const spec = TYPES[type] || TYPES.sedan;
-    const mesh = makeCarMesh(type, color);
-    mesh.position.set(x, 0, z);
-    mesh.rotation.y = heading;
-    const car = {
-      type: type,
-      spec: spec,
-      mesh: mesh,
-      x: x,
-      z: z,
-      heading: heading,
-      speed: 0,
-      steer: 0,
-      damage: 0, // 0 fine .. 1 wrecked
-      radius: Math.max(spec.len, spec.wid) * 0.42,
-      smoke: null,
-    };
-    return car;
-  }
+export function randomCar(rng) {
+  return { color: rng.pick(BODY_COLORS), shape: rng.pick(BODY_SHAPES) };
+}
 
-  function driveCar(car, input, dt, colliders, bounds) {
-    const spec = car.spec;
-    const top = spec.top * (1 - car.damage * 0.45);
-    // A car on fire (damage >= 0.8) keeps burning until it wrecks: the
-    // driver has to bail out or find a new ride before it goes.
-    if (car.damage >= 0.8 && car.damage < 1) car.damage = Math.min(1, car.damage + dt * 0.02);
-    // Steering follows speed: full lock only when slow, gentler when fast.
-    const steerTarget = input.steer * (0.55 / (1 + Math.abs(car.speed) * 0.03));
-    car.steer += (steerTarget - car.steer) * Math.min(1, dt * 8);
-    if (input.handbrake) {
-      car.speed -= car.speed * Math.min(1, dt * 2.2);
-    } else if (input.throttle > 0) {
-      car.speed += spec.accel * input.throttle * dt * (1 - Math.max(0, car.speed) / top);
-    } else if (input.throttle < 0) {
-      if (car.speed > 0.5) {
-        car.speed -= spec.accel * 1.4 * dt; // braking
-      } else {
-        car.speed += spec.accel * 0.55 * input.throttle * dt; // reverse, capped
-        if (car.speed < -9) car.speed = -9;
-      }
-    } else {
-      car.speed -= car.speed * Math.min(1, dt * 0.9); // rolling drag
+/** A fresh player car at (x, z) facing `angle` (radians, 0 = +x east). */
+export function createPlayerCar(scene, x, z, angle, color, shape) {
+  const mesh = createCarMesh(color, shape);
+  mesh.position.set(x, 0, z);
+  mesh.rotation.y = -angle;
+  scene.add(mesh);
+  return {
+    mesh, x, z, angle,
+    speed: 0, steer: 0, damage: 0,
+    color, shape,
+  };
+}
+
+/**
+ * Arcade driving: W/S accelerate and brake/reverse, A/D steer (stronger at
+ * low speed), Space handbrakes. Buildings stop the car with a slide and a
+ * damage tick; hard hits add damage and smoke.
+ */
+export function stepPlayerCar(G, car, input, dt) {
+  const up = input.held('up');
+  const down = input.held('down');
+  const left = input.held('left');
+  const right = input.held('right');
+  const handbrake = input.held('jump');
+  if (up) car.speed += CAR.accel * dt;
+  if (down) car.speed -= (car.speed > 0.5 ? CAR.brake : CAR.accel * 0.7) * dt;
+  if (!up && !down) car.speed -= Math.sign(car.speed) * Math.min(Math.abs(car.speed), 8 * dt);
+  if (handbrake) car.speed -= Math.sign(car.speed) * Math.min(Math.abs(car.speed), 26 * dt);
+  // A wrecked car loses its legs: damage caps the top speed.
+  const damageFactor = 1 - Math.min(0.5, car.damage / 200);
+  car.speed = Math.max(-CAR.maxReverse, Math.min(CAR.maxSpeed * damageFactor, car.speed));
+  const steerTarget = (left ? 1 : 0) - (right ? 1 : 0);
+  car.steer += (steerTarget - car.steer) * Math.min(1, 8 * dt);
+  const speedFactor = Math.min(1, Math.abs(car.speed) / 12);
+  car.angle += car.steer * CAR.steer * speedFactor * Math.sign(car.speed) * dt * (car.speed < 0 ? -1 : 1);
+  const nx = car.x + Math.cos(car.angle) * car.speed * dt;
+  const nz = car.z + Math.sin(car.angle) * car.speed * dt;
+  const fixed = resolveCircle(G.city, nx, nz, CAR.radius);
+  if (fixed.x !== nx || fixed.z !== nz) {
+    // A building stopped us: keep the slide, lose speed, take damage on a hard hit.
+    if (Math.abs(car.speed) > 14) {
+      car.damage = Math.min(100, car.damage + CAR.damagePerHit);
+      G.audio.crash();
+      G.shake = 0.35;
     }
-    if (Math.abs(car.speed) < 0.05 && input.throttle === 0) car.speed = 0;
-    // Heading turns with speed; reverse flips the steering sense.
-    car.heading += car.steer * car.speed * dt * 0.32;
-    const fx = Math.sin(car.heading);
-    const fz = Math.cos(car.heading);
-    let nx = car.x + fx * car.speed * dt;
-    let nz = car.z + fz * car.speed * dt;
-    // Collide with buildings: slide along the wall, lose a little speed.
-    let hit = false;
-    for (const b of colliders) {
-      const push = collideCircleAABB(nx, nz, car.radius, b);
-      if (push) {
-        nx += push.x;
-        nz += push.z;
-        hit = true;
-      }
-    }
-    if (hit) {
-      const before = car.speed;
-      car.speed *= 0.55;
-      if (Math.abs(before) > 12) car.damage = Math.min(1, car.damage + 0.12);
-    }
-    // Stay inside the world.
-    nx = Math.max(bounds.minX, Math.min(bounds.maxX, nx));
-    nz = Math.max(bounds.minZ, Math.min(bounds.maxZ, nz));
-    car.x = nx;
-    car.z = nz;
-    car.mesh.position.set(car.x, 0, car.z);
-    car.mesh.rotation.y = car.heading;
-    // Wheels spin on their axle and the front pair steers.
-    const spin = (car.speed * dt) / 0.36;
-    for (const w of car.mesh.userData.wheels) {
-      w.spinner.rotation.x += spin;
-      w.node.rotation.y = w.front ? car.steer * 1.6 : 0;
-    }
-    // Body roll and pitch sell the speed.
-    car.mesh.rotation.z = -car.steer * Math.min(1, Math.abs(car.speed) / 20) * 0.06;
-    car.mesh.rotation.x = input.throttle > 0 ? -0.012 : input.throttle < 0 ? 0.015 : 0;
-    return hit;
+    car.speed *= 0.35;
   }
-
-  // Damage a car by a set amount: bumps, rams and bullets all call this.
-  // Returns true when the hit wrecks the car outright.
-  function damageCar(car, amount) {
-    car.damage = Math.min(1, car.damage + amount);
-    return car.damage >= 1;
+  car.x = fixed.x;
+  car.z = fixed.z;
+  // Soft city bounds: the sea and the map edge push back.
+  car.x = Math.max(G.city.bounds.minX, Math.min(G.city.bounds.maxX - 40, car.x));
+  car.z = Math.max(G.city.bounds.minZ, Math.min(G.city.bounds.maxZ, car.z));
+  car.mesh.position.set(car.x, 0, car.z);
+  car.mesh.rotation.y = -car.angle;
+  const spin = car.speed * dt * 2.4;
+  for (const w of car.mesh.userData.wheels) w.rotation.x += spin;
+  const smoky = car.damage >= CAR.smokeAt;
+  car.mesh.userData.smoke.visible = smoky;
+  if (smoky) {
+    car.mesh.userData.smoke.rotation.y += dt * 3;
+    car.mesh.userData.smoke.scale.y = 1 + Math.sin(G.time * 9) * 0.15;
   }
-
-  // A puff of dark smoke above a damaged car; call once per frame while hurt.
-  // Past 0.8 damage the car is on fire: the smoke turns orange and thick.
-  function carSmoke(scene, car, dt, accumulator) {
-    if (car.damage < 0.35) return;
-    accumulator.t += dt;
-    if (accumulator.t < 0.12) return;
-    accumulator.t = 0;
-    const onFire = car.damage >= 0.8;
-    const puff = new THREE.Mesh(
-      new THREE.SphereGeometry(onFire ? 0.45 : 0.35, 6, 5),
-      new THREE.MeshBasicMaterial({
-        color: onFire ? 0xcc5500 : 0x555555, transparent: true, opacity: 0.6,
-      })
-    );
-    puff.position.set(car.x + (Math.random() - 0.5), 1.4, car.z + (Math.random() - 0.5));
-    scene.add(puff);
-    accumulator.puffs.push({ mesh: puff, life: 0.9 });
-  }
-
-  function updateSmoke(accumulator, dt) {
-    for (let i = accumulator.puffs.length - 1; i >= 0; i--) {
-      const p = accumulator.puffs[i];
-      p.life -= dt;
-      p.mesh.position.y += dt * 1.5;
-      p.mesh.material.opacity = Math.max(0, p.life * 0.6);
-      p.mesh.scale.multiplyScalar(1 + dt * 1.2);
-      if (p.life <= 0) {
-        p.mesh.parent.remove(p.mesh);
-        p.mesh.material.dispose();
-        accumulator.puffs.splice(i, 1);
-      }
-    }
-  }
-
-  global.VP = global.VP || {};
-  global.VP.TYPES = TYPES;
-  global.VP.PAINTS = PAINTS;
-  global.VP.makeCarMesh = makeCarMesh;
-  global.VP.makeLightBar = makeLightBar;
-  global.VP.makeCar = makeCar;
-  global.VP.driveCar = driveCar;
-  global.VP.damageCar = damageCar;
-  global.VP.collideCircleAABB = collideCircleAABB;
-  global.VP.carSmoke = carSmoke;
-  global.VP.updateSmoke = updateSmoke;
-})(typeof window !== 'undefined' ? window : globalThis);
+  // Brake lights glow while the driver is on the brakes or the handbrake.
+  const braking = down || handbrake;
+  car.mesh.userData.brakeL.material.color.setHex(braking ? 0xff2a2a : 0x550000);
+  car.mesh.userData.brakeR.material.color.setHex(braking ? 0xff2a2a : 0x550000);
+  return car;
+}

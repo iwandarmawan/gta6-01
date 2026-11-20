@@ -1,57 +1,60 @@
-// rng.js — deterministic seeded random numbers for Solmar Bay.
-// The whole city is generated from one seed, so a screenshot with
-// ?seed=N always shows the same streets, buildings and traffic.
-(function (global) {
-  'use strict';
+// A small seeded random number generator (mulberry32) plus the helpers the
+// city builder and the traffic/pedestrian spawners reach for: the same seed
+// always builds the same Solmar Bay, which is what makes the screenshot
+// scenes repeatable from one run to the next.
 
-  // mulberry32: a small, fast seeded PRNG with a good distribution.
-  function mulberry32(seed) {
-    let a = seed >>> 0;
-    return function () {
-      a |= 0;
-      a = (a + 0x6d2b79f5) | 0;
-      let t = Math.imul(a ^ (a >>> 15), 1 | a);
-      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    };
+export function createRng(seed) {
+  let a = seed | 0;
+  function next() {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   }
-
-  // A small helper object around one seeded stream.
-  function makeRng(seed) {
-    const next = mulberry32(seed);
-    return {
-      next: next,
-      // Float in [min, max).
-      range: function (min, max) {
-        return min + next() * (max - min);
-      },
-      // Whole number in [min, max] inclusive.
-      int: function (min, max) {
-        return Math.floor(min + next() * (max - min + 1));
-      },
-      // True with probability p (0..1).
-      chance: function (p) {
-        return next() < p;
-      },
-      // One element of an array, uniformly.
-      pick: function (arr) {
-        return arr[Math.floor(next() * arr.length)];
-      },
-      // A shuffled copy of an array (Fisher-Yates).
-      shuffle: function (arr) {
-        const out = arr.slice();
-        for (let i = out.length - 1; i > 0; i--) {
-          const j = Math.floor(next() * (i + 1));
-          const tmp = out[i];
-          out[i] = out[j];
-          out[j] = tmp;
-        }
-        return out;
-      },
-    };
-  }
-
-  global.VP = global.VP || {};
-  global.VP.makeRng = makeRng;
-  global.VP.mulberry32 = mulberry32;
-})(typeof window !== 'undefined' ? window : globalThis);
+  return {
+    /** A float in [0, 1). */
+    next,
+    /** A float in [min, max). */
+    range(min, max) {
+      return min + next() * (max - min);
+    },
+    /** An integer in [min, max] inclusive. */
+    int(min, max) {
+      return min + Math.floor(next() * (max - min + 1));
+    },
+    /** One element of the array, uniformly. */
+    pick(list) {
+      return list[Math.floor(next() * list.length)];
+    },
+    /** True with probability p (0..1). */
+    chance(p) {
+      return next() < p;
+    },
+    /** A random angle in radians, 0..2PI. */
+    angle() {
+      return next() * Math.PI * 2;
+    },
+    /** A shuffled copy of the array (Fisher-Yates). */
+    shuffle(list) {
+      const out = list.slice();
+      for (let i = out.length - 1; i > 0; i -= 1) {
+        const j = Math.floor(next() * (i + 1));
+        const tmp = out[i];
+        out[i] = out[j];
+        out[j] = tmp;
+      }
+      return out;
+    },
+    /** One element, weighted by the matching weights array. */
+    pickWeighted(list, weights) {
+      let total = 0;
+      for (const w of weights) total += w;
+      let roll = next() * total;
+      for (let i = 0; i < list.length; i += 1) {
+        roll -= weights[i];
+        if (roll <= 0) return list[i];
+      }
+      return list[list.length - 1];
+    },
+  };
+}

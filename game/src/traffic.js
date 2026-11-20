@@ -1,241 +1,130 @@
-// traffic.js — Solmar Bay traffic: cars that follow the road grid and
-// pedestrians who walk the sidewalks and run from trouble.
-(function (global) {
-  'use strict';
+// Traffic: cars that follow the road lanes, stop at junctions, and keep a
+// loose gap to the car ahead. Each one drives along one road line, turns at
+// intersections, and despawns far behind the player to respawn ahead — the
+// city always feels busy without ever simulating the whole grid.
+import { TRAFFIC } from './config.js';
+import { createCarMesh, randomCar } from './cars.js';
+import { resolveCircle } from './city.js';
 
-  // A traffic car drives from intersection to intersection on the road grid.
-  // At each junction it keeps going straight most of the time, sometimes turns.
-  function makeTrafficCar(scene, rng, city) {
-    const roads = city.roads;
-    const horizontal = rng.chance(0.5);
-    const road = rng.pick(roads);
-    const dir = rng.chance(0.5) ? 1 : -1;
-    // Lane offset: keep right, 3 m from the road centre.
-    const lane = 3;
-    const type = rng.pick(['sedan', 'sedan', 'coupe', 'van', 'taxi', 'truck']);
-    const color = type === 'taxi' ? 0xf2c200 : rng.pick(VP.PAINTS);
-    const car = VP.makeCar(type, color, 0, 0, 0);
-    if (horizontal) {
-      car.x = rng.range(-city.half, city.half);
-      car.z = road + (dir > 0 ? lane : -lane);
-      car.heading = dir > 0 ? Math.PI / 2 : -Math.PI / 2;
-    } else {
-      car.x = road + (dir > 0 ? -lane : lane);
-      car.z = rng.range(-city.half, city.half);
-      car.heading = dir > 0 ? 0 : Math.PI;
-    }
-    car.speed = rng.range(7, 11);
-    car.cruise = car.speed;
-    car.axis = horizontal ? 'x' : 'z';
-    car.dir = dir;
-    car.wait = 0;
-    car.mesh.position.set(car.x, 0, car.z);
-    car.mesh.rotation.y = car.heading;
-    scene.add(car.mesh);
-    return car;
+function spawnSpot(G, rng, near) {
+  // A road line near the player (or anywhere at boot), on a random lane.
+  const lines = G.city.roads;
+  const line = rng.pick(lines);
+  const along = near
+    ? near + rng.range(-90, 90)
+    : rng.range(-G.city.half + 20, G.city.half - 20);
+  const lane = rng.chance(0.5) ? 3 : -3;
+  if (rng.chance(0.5)) return { x: along, z: line + lane, angle: rng.chance(0.5) ? 0 : Math.PI };
+  return { x: line + lane, z: along, angle: rng.chance(0.5) ? Math.PI / 2 : -Math.PI / 2 };
+}
+
+export function createTraffic(G, scene, rng) {
+  const cars = [];
+  for (let i = 0; i < TRAFFIC.count; i += 1) {
+    const spot = spawnSpot(G, rng, null);
+    const spec = randomCar(rng);
+    const mesh = createCarMesh(spec.color, spec.shape);
+    mesh.position.set(spot.x, 0, spot.z);
+    mesh.rotation.y = -spot.angle;
+    scene.add(mesh);
+    cars.push({
+      mesh, x: spot.x, z: spot.z, angle: spot.angle,
+      speed: rng.range(TRAFFIC.speed * 0.7, TRAFFIC.speed * 1.1),
+      wait: 0, shape: spec.shape,
+    });
   }
+  return { cars };
+}
 
-  function nextIntersection(car, city) {
-    // The next grid line ahead of the car along its axis.
-    const pos = car.axis === 'x' ? car.x : car.z;
-    const step = city.pitch;
-    const k = Math.floor((pos - -city.half) / step);
-    const ahead = car.dir > 0 ? (k + 1) * step - city.half : k * step - city.half;
-    return ahead;
-  }
-
-  function updateTrafficCar(car, dt, rng, city, others, pedestrians = []) {
-    // A wrecked car is done driving: it sits there smoking until the
-    // city tows it (it never does — Solmar Bay is like that).
-    if (car.damage >= 1) {
-      car.speed = 0;
-      car.mesh.position.set(car.x, 0, car.z);
-      return;
+function nearestAhead(G, car) {
+  // The closest traffic car ahead on the same lane, if any.
+  let best = null;
+  let bestD = TRAFFIC.minGap;
+  for (const other of G.traffic.cars) {
+    if (other === car) continue;
+    const dx = other.x - car.x;
+    const dz = other.z - car.z;
+    const forward = dx * Math.cos(car.angle) + dz * Math.sin(car.angle);
+    const side = Math.abs(-dx * Math.sin(car.angle) + dz * Math.cos(car.angle));
+    if (forward > 0 && forward < bestD && side < 3) {
+      best = other;
+      bestD = forward;
     }
+  }
+  return best;
+}
+
+export function stepTraffic(G, dt) {
+  const player = G.inCar ? { x: G.car.x, z: G.car.z } : { x: G.player.x, z: G.player.z };
+  for (const car of G.traffic.cars) {
+    // Far behind the player: recycle ahead so the streets stay busy.
+    const dx = car.x - player.x;
+    const dz = car.z - player.z;
+    if (dx * dx + dz * dz > 260 * 260) {
+      const spot = spawnSpot(G, G.rng, null);
+      car.x = spot.x;
+      car.z = spot.z;
+      car.angle = spot.angle;
+      car.wait = 0;
+    }
+    // Junction pause: sometimes wait a beat at an intersection.
+    const nearJunction = G.city.roads.some((p) => Math.abs(car.x - p) < 4 && Math.abs(car.z - p) < 4);
     if (car.wait > 0) {
       car.wait -= dt;
-      car.speed = 0;
-      return;
+      continue;
     }
-    // Stop for a car directly ahead in the same lane.
-    const fx = Math.sin(car.heading);
-    const fz = Math.cos(car.heading);
-    for (const o of others) {
-      if (o === car) continue;
-      const dx = o.x - car.x;
-      const dz = o.z - car.z;
-      const along = dx * fx + dz * fz;
-      const side = Math.abs(dx * fz - dz * fx);
-      if (along > 0 && along < 8 && side < 2.2) {
-        car.speed = Math.max(0, car.speed - 14 * dt);
-        car.mesh.position.set(car.x, 0, car.z);
-        return;
+    if (nearJunction && G.rng.chance(0.004)) {
+      car.wait = G.rng.range(0.8, 2.2);
+      continue;
+    }
+    if (nearestAhead(G, car)) continue;
+    // Ease off near a junction so the flow reads as city driving, not a race.
+    const approachingJunction = G.city.roads.some((p) => Math.abs(car.x - p) < 10 && Math.abs(car.z - p) < 10);
+    const cruise = approachingJunction ? car.speed * 0.5 : car.speed;
+    // Panic brake if the player is right in front of us — and honk about it.
+    const pdx = player.x - car.x;
+    const pdz = player.z - car.z;
+    const pForward = pdx * Math.cos(car.angle) + pdz * Math.sin(car.angle);
+    const pSide = Math.abs(-pdx * Math.sin(car.angle) + pdz * Math.cos(car.angle));
+    if (pForward > 0 && pForward < 10 && pSide < 3) {
+      if (!car.honked) {
+        car.honked = true;
+        G.audio.horn();
       }
+      continue;
     }
-    // And for a pedestrian crossing right ahead — Solmar Bay drivers
-    // stop for jaywalkers, at least when someone is watching.
-    for (const p of pedestrians) {
-      const dx = p.x - car.x;
-      const dz = p.z - car.z;
-      const along = dx * fx + dz * fz;
-      const side = Math.abs(dx * fz - dz * fx);
-      if (along > 0 && along < 6 && side < 1.6) {
-        car.speed = Math.max(0, car.speed - 14 * dt);
-        car.mesh.position.set(car.x, 0, car.z);
-        return;
-      }
-    }
-    // Ease back up to cruising speed.
-    car.speed += (car.cruise - car.speed) * Math.min(1, dt * 1.5);
-    const target = nextIntersection(car, city);
-    const pos = car.axis === 'x' ? car.x : car.z;
-    const dist = (target - pos) * car.dir;
-    if (dist <= 0.5) {
-      // Reached a junction: mostly straight on, sometimes turn.
-      const roll = rng.next();
-      const turn = roll < 0.62 ? 0 : roll < 0.81 ? 1 : -1; // straight, left, right
-      if (turn === 0) {
-        // Keep the same axis and direction; the next intersection is ahead.
-      } else {
-        const wasX = car.axis === 'x';
-        car.axis = wasX ? 'z' : 'x';
-        // Turning left/right from the current heading: facing +X, a left
-        // turn heads -Z and a right turn heads +Z; facing +Z it is the
-        // mirror image. (turn = +1 left, -1 right.)
-        const newDir = turn * car.dir * (wasX ? -1 : 1);
-        car.dir = newDir;
-        // Snap onto the new road's lane.
-        const lane = 3;
-        if (car.axis === 'x') {
-          car.z = Math.round((car.z + city.half) / city.pitch) * city.pitch - city.half + (car.dir > 0 ? lane : -lane);
-          car.heading = car.dir > 0 ? Math.PI / 2 : -Math.PI / 2;
-        } else {
-          car.x = Math.round((car.x + city.half) / city.pitch) * city.pitch - city.half + (car.dir > 0 ? -lane : lane);
-          car.heading = car.dir > 0 ? 0 : Math.PI;
-        }
-      }
-      // A short pause at some junctions reads as stopping for the cross road.
-      if (rng.chance(0.25)) car.wait = rng.range(0.8, 2.2);
-    }
-    // Drive: advance along the current axis and lane.
-    const step = car.speed * dt;
-    if (car.axis === 'x') {
-      car.x += car.dir * step;
-      const laneZ = Math.round((car.z + city.half) / city.pitch) * city.pitch - city.half + (car.dir > 0 ? 3 : -3);
-      car.z += (laneZ - car.z) * Math.min(1, dt * 3);
-      car.heading = car.dir > 0 ? Math.PI / 2 : -Math.PI / 2;
+    car.honked = false;
+    const nx = car.x + Math.cos(car.angle) * cruise * dt;
+    const nz = car.z + Math.sin(car.angle) * cruise * dt;
+    const fixed = resolveCircle(G.city, nx, nz, 2.3);
+    if (fixed.x === nx && fixed.z === nz) {
+      car.x = nx;
+      car.z = nz;
     } else {
-      car.z += car.dir * step;
-      const laneX = Math.round((car.x + city.half) / city.pitch) * city.pitch - city.half + (car.dir > 0 ? -3 : 3);
-      car.x += (laneX - car.x) * Math.min(1, dt * 3);
-      car.heading = car.dir > 0 ? 0 : Math.PI;
+      // Blocked by a building (should not happen on roads): turn around.
+      car.angle += Math.PI;
     }
-    // Wrap around the far edge so traffic never runs out.
-    if (car.x > city.half + 8) car.x = -city.half - 8;
-    if (car.x < -city.half - 8) car.x = city.half + 8;
-    if (car.z > city.half + 8) car.z = -city.half - 8;
-    if (car.z < -city.half - 8) car.z = city.half + 8;
+    // At an intersection, sometimes turn onto the crossing road.
+    const atCross = G.city.roads.some((p) => Math.abs(car.x - p) < 2) && G.city.roads.some((p) => Math.abs(car.z - p) < 2);
+    if (atCross && G.rng.chance(0.02)) car.angle += G.rng.chance(0.5) ? Math.PI / 2 : -Math.PI / 2;
     car.mesh.position.set(car.x, 0, car.z);
-    car.mesh.rotation.y = car.heading;
-    const spin = (car.speed * dt) / 0.36;
-    for (const w of car.mesh.userData.wheels) w.spinner.rotation.x += spin;
+    car.mesh.rotation.y = -car.angle;
+    for (const w of car.mesh.userData.wheels) w.rotation.x += car.speed * dt * 2.4;
   }
+}
 
-  // --- pedestrians ---------------------------------------------------------
-  function makePedestrian(scene, rng, city) {
-    const group = new THREE.Group();
-    const skin = rng.pick([0xd9a066, 0xb97a4a, 0x8a5a30, 0xe8b88a]);
-    const shirt = rng.pick([0xc0392b, 0x2e6db4, 0x27ae60, 0xf2d05a, 0x8e44ad, 0xe8e8e8, 0x333333]);
-    const legs = rng.pick([0x2c3e50, 0x5a5a5a, 0x8a6a42, 0xdddddd]);
-    const body = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.62, 0.28),
-      new THREE.MeshLambertMaterial({ color: shirt }));
-    body.position.y = 1.02;
-    body.castShadow = true;
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 8),
-      new THREE.MeshLambertMaterial({ color: skin }));
-    head.position.y = 1.5;
-    head.castShadow = true;
-    const legL = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.68, 0.2),
-      new THREE.MeshLambertMaterial({ color: legs }));
-    legL.position.set(-0.13, 0.34, 0);
-    const legR = legL.clone();
-    legR.position.x = 0.13;
-    group.add(body);
-    group.add(head);
-    group.add(legL);
-    group.add(legR);
-    group.userData.legL = legL;
-    group.userData.legR = legR;
-    const ped = {
-      mesh: group,
-      x: 0,
-      z: 0,
-      heading: 0,
-      speed: rng.range(1.1, 1.9),
-      targetX: 0,
-      targetZ: 0,
-      fleeT: 0,
-      walkPhase: rng.range(0, 6),
-    };
-    retargetPed(ped, rng, city);
-    ped.x = ped.targetX;
-    ped.z = ped.targetZ;
-    retargetPed(ped, rng, city);
-    group.position.set(ped.x, 0, ped.z);
-    scene.add(group);
-    return ped;
-  }
-
-  // A sidewalk point: just off a road, inside a block's edge.
-  function sidewalkPoint(rng, city) {
-    const road = rng.pick(city.roads);
-    const along = rng.range(-city.half, city.half);
-    const side = rng.chance(0.5) ? 1 : -1;
-    if (rng.chance(0.5)) return { x: along, z: road + side * 7.5 };
-    return { x: road + side * 7.5, z: along };
-  }
-
-  function retargetPed(ped, rng, city) {
-    const p = sidewalkPoint(rng, city);
-    ped.targetX = p.x;
-    ped.targetZ = p.z;
-  }
-
-  function updatePedestrian(ped, dt, rng, city, threat) {
-    // Flee from a nearby crash or gunshot for a few seconds.
-    if (threat) {
-      const dx = ped.x - threat.x;
-      const dz = ped.z - threat.z;
-      const d = Math.sqrt(dx * dx + dz * dz);
-      if (d < 18 && d > 0.01) {
-        ped.fleeT = 3;
-        ped.targetX = ped.x + (dx / d) * 30;
-        ped.targetZ = ped.z + (dz / d) * 30;
-      }
-    }
-    if (ped.fleeT > 0) ped.fleeT -= dt;
-    const speed = ped.fleeT > 0 ? 4.2 : ped.speed;
-    const dx = ped.targetX - ped.x;
-    const dz = ped.targetZ - ped.z;
+/** The nearest traffic car to (x, z) within `maxDist`, or null. */
+export function nearestTrafficCar(G, x, z, maxDist) {
+  let best = null;
+  let bestD = maxDist;
+  for (const car of G.traffic.cars) {
+    const dx = car.x - x;
+    const dz = car.z - z;
     const d = Math.sqrt(dx * dx + dz * dz);
-    if (d < 0.6) {
-      retargetPed(ped, rng, city);
-      return;
+    if (d < bestD) {
+      best = car;
+      bestD = d;
     }
-    ped.heading = Math.atan2(dx, dz);
-    ped.x += (dx / d) * speed * dt;
-    ped.z += (dz / d) * speed * dt;
-    ped.walkPhase += dt * speed * 4;
-    const swing = Math.sin(ped.walkPhase) * 0.5;
-    ped.mesh.userData.legL.rotation.x = swing;
-    ped.mesh.userData.legR.rotation.x = -swing;
-    ped.mesh.position.set(ped.x, 0, ped.z);
-    ped.mesh.rotation.y = ped.heading;
   }
-
-  global.VP = global.VP || {};
-  global.VP.makeTrafficCar = makeTrafficCar;
-  global.VP.updateTrafficCar = updateTrafficCar;
-  global.VP.makePedestrian = makePedestrian;
-  global.VP.updatePedestrian = updatePedestrian;
-})(typeof window !== 'undefined' ? window : globalThis);
+  return best;
+}

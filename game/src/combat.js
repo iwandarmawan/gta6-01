@@ -1,399 +1,246 @@
-// combat.js — Solmar Bay fighting: fists and a pistol, hitscan shots,
-// muzzle flash, tracers, and the thugs who shoot back. Rico starts with
-// his fists; Delgado hands him a pistol when the jobs get loud.
-(function (global) {
-  'use strict';
+// Combat: fists and a pistol. The pistol is hitscan — a ray from the camera
+// through the crosshair — with a muzzle flash, a 12-round magazine, a 48-round
+// reserve and a 1.2 s reload. Fists are short range with a knockback shove.
+// Shooting raises the heat and clears the block: pedestrians flee, and anyone
+// hit hard enough goes down.
+const THREE = window.THREE;
+import { COMBAT } from './config.js';
+import { knockDownPed, scarePeds } from './peds.js';
+import { addWanted } from './police.js';
+import { enemyDown } from './missions.js';
 
-  const PISTOL_RANGE = 60;
-  const PISTOL_DAMAGE = 34;
-  const PISTOL_COOLDOWN = 0.32;
-  const PISTOL_MAG = 12;
-  const PUNCH_RANGE = 2.6;
-  const PUNCH_DAMAGE = 25;
-  const PUNCH_COOLDOWN = 0.5;
-  const RELOAD_TIME = 1.2;
-  const THUG_HP = 100;
-  const THUG_SHOT_DAMAGE = 7;
-  const THUG_SHOT_EVERY = 1.7;
-  const THUG_RANGE = 26;
+export function createCombat(G, scene) {
+  // Muzzle flash: a bright sprite at the barrel, shown for one frame in ten.
+  // Double-sided so it reads from the chase camera behind the player.
+  const flashMat = new THREE.MeshBasicMaterial({ color: 0xffe066, transparent: true, opacity: 0.95, side: THREE.DoubleSide });
+  const flash = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 1.1), flashMat);
+  flash.rotation.z = Math.PI / 4; // a diamond reads as a flash, not a billboard
+  flash.visible = false;
+  scene.add(flash);
+  const flashLight = new THREE.PointLight(0xffc93c, 0, 14);
+  scene.add(flashLight);
+  // The player's pistol: a small dark box in the right hand when drawn.
+  const pistol = new THREE.Mesh(
+    new THREE.BoxGeometry(0.09, 0.14, 0.42),
+    new THREE.MeshLambertMaterial({ color: 0x1a1a1a }),
+  );
+  pistol.visible = false;
+  scene.add(pistol);
+  return {
+    mag: COMBAT.magSize,
+    reserve: COMBAT.reserveMax,
+    reloading: 0,
+    weapon: 'fists',
+    flashTimer: 0,
+    flash, flashLight, pistol,
+    cooldown: 0,
+    raycaster: new THREE.Raycaster(),
+  };
+}
 
-  function makeCombat(scene) {
-    // A flat glowing quad for the muzzle flash and a line for the tracer.
-    // Both live in the scene, hidden until a shot fires.
-    const flashMat = new THREE.MeshBasicMaterial({
-      color: 0xffd94a, transparent: true, opacity: 0.95, side: THREE.DoubleSide,
-    });
-    const flash = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.9), flashMat);
-    flash.visible = false;
-    scene.add(flash);
-    const tracerGeo = new THREE.BufferGeometry();
-    tracerGeo.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 0, 0, 0], 3));
-    const tracer = new THREE.Line(tracerGeo, new THREE.LineBasicMaterial({
-      color: 0xffe9a0, transparent: true, opacity: 0,
-    }));
-    tracer.visible = false;
-    scene.add(tracer);
-    return {
-      scene: scene,
-      weapon: 'fists',
-      ammo: 0,
-      reserve: 0,
-      reloadT: 0,
-      attackT: 0,
-      flashT: 0,
-      flash: flash,
-      tracer: tracer,
-      tracerT: 0,
-      hitmarkT: 0,
-      kills: 0,
-    };
+function hitTargets(G) {
+  // Everything a bullet can hit: pedestrians, officers, ambush enemies.
+  const targets = [];
+  for (const ped of G.peds.peds) if (!ped.down) targets.push({ mesh: ped.mesh, kind: 'ped', ref: ped, radius: 1.1, y: 1.1 });
+  for (const off of G.police.officers) targets.push({ mesh: off.mesh, kind: 'officer', ref: off, radius: 1.1, y: 1.1 });
+  for (const en of G.combat.enemies) if (en.hp > 0) targets.push({ mesh: en.mesh, kind: 'enemy', ref: en, radius: 1.1, y: 1.1 });
+  return targets;
+}
+
+export function shootPistol(G) {
+  const C = G.combat;
+  if (C.reloading > 0 || C.cooldown > 0 || C.weapon !== 'pistol') return false;
+  if (C.mag <= 0) {
+    G.audio.click();
+    C.cooldown = 0.25;
+    return false;
   }
-
-  // Bolt a small pistol onto the player's right hand. The gun points along
-  // the arm, so it aims where Rico faces.
-  function attachGun(player) {
-    if (player.mesh.userData.gun) return;
-    const gun = new THREE.Group();
-    const dark = new THREE.MeshLambertMaterial({ color: 0x1c1c1c });
-    const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.12, 0.42), dark);
-    barrel.position.set(0, -0.05, 0.22);
-    const grip = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.24, 0.12), dark);
-    grip.position.set(0, -0.18, -0.02);
-    gun.add(barrel);
-    gun.add(grip);
-    gun.position.set(0, -0.28, 0.1);
-    player.mesh.userData.armR.add(gun);
-    player.mesh.userData.gun = gun;
-  }
-
-  function grantPistol(combat, player) {
-    attachGun(player);
-    combat.weapon = 'pistol';
-    if (combat.ammo <= 0) combat.ammo = PISTOL_MAG;
-    if (combat.reserve <= 0) combat.reserve = 48;
-  }
-
-  function setWeapon(combat, player, name) {
-    if (name === 'pistol') {
-      grantPistol(combat, player);
-    } else {
-      combat.weapon = 'fists';
-      if (player.mesh.userData.gun) player.mesh.userData.gun.visible = false;
+  C.mag -= 1;
+  C.cooldown = 0.22;
+  C.flashTimer = 0.07;
+  G.audio.shot();
+  G.stats.shotsFired += 1;
+  // Aim like a third-person shooter: take the crosshair's line of sight
+  // (the camera's forward ray), pick the point 30 m out on it, and fire
+  // from the player's gun toward that point. A ray straight out of the
+  // high chase camera passes over heads at close range; this one does not.
+  const camDir = new THREE.Vector3();
+  G.camera.getWorldDirection(camDir);
+  const aimPoint = G.camera.position.clone().add(camDir.multiplyScalar(30));
+  const origin = new THREE.Vector3(G.player.x, 1.4, G.player.z);
+  const dir = aimPoint.sub(origin).normalize();
+  C.raycaster.set(origin, dir);
+  C.raycaster.far = COMBAT.shotRange;
+  let best = null;
+  let bestDist = COMBAT.shotRange;
+  for (const t of hitTargets(G)) {
+    const centre = new THREE.Vector3(t.ref.x, t.y, t.ref.z);
+    const toTarget = centre.clone().sub(C.raycaster.ray.origin);
+    const along = toTarget.dot(C.raycaster.ray.direction);
+    if (along < 0 || along > bestDist) continue;
+    const closest = C.raycaster.ray.origin.clone().add(C.raycaster.ray.direction.clone().multiplyScalar(along));
+    if (closest.distanceTo(centre) < t.radius && along < bestDist) {
+      best = t;
+      bestDist = along;
     }
-    if (name === 'pistol' && player.mesh.userData.gun) player.mesh.userData.gun.visible = true;
   }
-
-  // Where a shot goes: straight ahead of the camera on foot. The player
-  // turns to face the shot, so the mesh and the bullet agree.
-  function aimDir(world) {
-    return { x: Math.sin(world.camYaw), z: Math.cos(world.camYaw) };
-  }
-
-  function gunTip(world) {
-    const d = aimDir(world);
-    return {
-      x: world.player.x + d.x * 0.9,
-      y: 1.35,
-      z: world.player.z + d.z * 0.9,
-      dx: d.x,
-      dz: d.z,
-    };
-  }
-
-  // The nearest thing a bullet can hit: a thug first, then a pedestrian,
-  // anything inside a narrow cone ahead of the muzzle and within range.
-  function pickTarget(world, tip, range) {
-    let best = null;
-    let bestD = range;
-    const consider = function (x, z, kind, ref) {
-      const dx = x - tip.x;
-      const dz = z - tip.z;
-      const d = Math.sqrt(dx * dx + dz * dz);
-      if (d < 1 || d > bestD) return;
-      const along = (dx * tip.dx + dz * tip.dz) / d;
-      if (along < 0.92) return; // outside the firing cone
-      bestD = d;
-      best = { kind: kind, ref: ref, dist: d, x: x, z: z };
-    };
-    for (const t of world.thugs) if (!t.dead) consider(t.x, t.z, 'thug', t);
-    for (const p of world.pedestrians) consider(p.x, p.z, 'ped', p);
-    return best;
-  }
-
-  function showTracer(combat, tip, end) {
-    const pos = combat.tracer.geometry.attributes.position;
-    pos.setXYZ(0, tip.x, tip.y, tip.z);
-    pos.setXYZ(1, end.x, end.y, end.z);
-    pos.needsUpdate = true;
-    combat.tracer.visible = true;
-    combat.tracer.material.opacity = 0.9;
-    combat.tracerT = 0.09;
-  }
-
-  function showFlash(combat, tip) {
-    combat.flash.position.set(tip.x, tip.y, tip.z);
-    combat.flash.rotation.y = Math.atan2(tip.dx, tip.dz);
-    combat.flash.visible = true;
-    combat.flash.material.opacity = 0.95;
-    combat.flashT = 0.07;
-  }
-
-  function fireShot(combat, world) {
-    const player = world.player;
-    if (combat.ammo <= 0) {
-      VP.reloadSound(world.audio);
-      return 'empty';
-    }
-    combat.ammo--;
-    combat.attackT = PISTOL_COOLDOWN;
-    player.heading = world.camYaw; // Rico turns to face the shot
-    player.aimT = 0.4; // the gun arm rises to aim
-    const tip = gunTip(world);
-    showFlash(combat, tip);
-    VP.shot(world.audio);
-    VP.addHeat(world.wanted, 2); // a gunshot in public draws the law
-    world.lastHeatT = world.time;
-    // Pedestrians near the shot run for cover.
-    world.gunshotThreat = { x: player.x, z: player.z, until: world.time + 1.5 };
-    const target = pickTarget(world, tip, PISTOL_RANGE);
-    if (!target) {
-      showTracer(combat, tip, { x: tip.x + tip.dx * PISTOL_RANGE, y: 1.2, z: tip.z + tip.dz * PISTOL_RANGE });
-      return 'miss';
-    }
-    showTracer(combat, tip, { x: target.x, y: 1.2, z: target.z });
-    combat.hitmarkT = 0.4;
-    if (target.kind === 'thug') {
-      hurtThug(target.ref, PISTOL_DAMAGE, world);
-      return 'hit-thug';
-    }
-    // A bullet that finds a pedestrian is a crime: they flee, heat jumps.
-    target.ref.fleeT = 5;
-    target.ref.targetX = target.ref.x + (target.ref.x - player.x) * 2;
-    target.ref.targetZ = target.ref.z + (target.ref.z - player.z) * 2;
-    VP.addHeat(world.wanted, 20);
-    world.lastHeatT = world.time;
-    return 'hit-ped';
-  }
-
-  function punch(combat, world) {
-    const player = world.player;
-    combat.attackT = PUNCH_COOLDOWN;
-    player.heading = world.camYaw;
-    player.punchT = 0.25; // the fist swings forward
-    VP.thud(world.audio);
-    // A punch reaches anything close and roughly in front of Rico.
-    const fx = Math.sin(player.heading);
-    const fz = Math.cos(player.heading);
-    let hit = null;
-    for (const t of world.thugs) {
-      if (t.dead) continue;
-      const dx = t.x - player.x;
-      const dz = t.z - player.z;
-      const d = Math.sqrt(dx * dx + dz * dz);
-      if (d < PUNCH_RANGE && (dx * fx + dz * fz) / d > 0.5) { hit = t; break; }
-    }
-    if (hit) {
-      hurtThug(hit, PUNCH_DAMAGE, world);
-      combat.hitmarkT = 0.3;
-      return 'hit-thug';
-    }
-    for (const p of world.pedestrians) {
-      const dx = p.x - player.x;
-      const dz = p.z - player.z;
-      const d = Math.sqrt(dx * dx + dz * dz);
-      if (d < PUNCH_RANGE && d > 0.01 && (dx * fx + dz * fz) / d > 0.5) {
-        p.fleeT = 5;
-        p.targetX = p.x + (dx / d) * 30;
-        p.targetZ = p.z + (dz / d) * 30;
-        VP.addHeat(world.wanted, 10);
-        world.lastHeatT = world.time;
-        return 'hit-ped';
+  // Muzzle flash sits at the player's hand, facing the camera.
+  const hand = new THREE.Vector3(G.player.x, 1.4, G.player.z);
+  C.flash.position.copy(hand).add(new THREE.Vector3(Math.cos(G.player.angle), 0, Math.sin(G.player.angle)).multiplyScalar(0.9));
+  C.flash.visible = true;
+  C.flashLight.position.copy(C.flash.position);
+  C.flashLight.intensity = 6;
+  if (best) {
+    G.stats.hits += 1;
+    if (best.kind === 'ped') {
+      knockDownPed(G, best.ref);
+      G.stats.pedsHit += 1;
+    } else if (best.kind === 'officer') {
+      best.ref.hp -= 1;
+      if (best.ref.hp <= 0) {
+        best.ref.mesh.visible = false;
+        best.ref.x = 1e6; // off the map; the police step removes it
+        addWanted(G, 1);
+      }
+    } else if (best.kind === 'enemy') {
+      best.ref.hp -= 1;
+      if (best.ref.hp <= 0) {
+        best.ref.mesh.visible = false;
+        best.ref.x = 1e6;
+        enemyDown(G);
       }
     }
-    return 'miss';
   }
-
-  // One attack press: pistol fires, fists swing. Driving, pausing and
-  // reloading all block it.
-  function attackPressed(combat, world) {
-    if (world.player.inCar || world.state !== 'playing') return 'blocked';
-    if (combat.reloadT > 0 || combat.attackT > 0) return 'cooling';
-    if (combat.weapon === 'pistol') return fireShot(combat, world);
-    return punch(combat, world);
+  // Gunfire raises the heat (throttled) and scares the block.
+  if (G.police.crimeCooldown <= 0) {
+    addWanted(G, 1);
+    G.police.crimeCooldown = 3;
   }
+  scarePeds(G, G.player.x, G.player.z, 35);
+  return true;
+}
 
-  function startReload(combat, world) {
-    if (combat.weapon !== 'pistol') return false;
-    if (combat.reloadT > 0 || combat.ammo >= PISTOL_MAG || combat.reserve <= 0) return false;
-    combat.reloadT = RELOAD_TIME;
-    VP.reloadSound(world.audio);
-    return true;
-  }
-
-  function updateCombat(combat, world, dt) {
-    if (combat.attackT > 0) combat.attackT -= dt;
-    if (combat.hitmarkT > 0) combat.hitmarkT -= dt;
-    if (combat.reloadT > 0) {
-      combat.reloadT -= dt;
-      if (combat.reloadT <= 0) {
-        const need = PISTOL_MAG - combat.ammo;
-        const take = Math.min(need, combat.reserve);
-        combat.ammo += take;
-        combat.reserve -= take;
-      }
-    }
-    if (combat.flashT > 0) {
-      combat.flashT -= dt;
-      combat.flash.material.opacity = Math.max(0, combat.flashT / 0.07) * 0.95;
-      combat.flash.rotation.z += dt * 9; // the flash spins as it dies
-      if (combat.flashT <= 0) combat.flash.visible = false;
-    }
-    if (combat.tracerT > 0) {
-      combat.tracerT -= dt;
-      combat.tracer.material.opacity = Math.max(0, combat.tracerT / 0.09) * 0.9;
-      if (combat.tracerT <= 0) combat.tracer.visible = false;
-    }
-    // The gunshot scare fades; pedestrians stop running from an old shot.
-    if (world.gunshotThreat && world.time > world.gunshotThreat.until) world.gunshotThreat = null;
-  }
-
-  // --- thugs ---------------------------------------------------------------
-  // A thug is a pedestrian-shaped figure in a dark jacket with a red
-  // bandana and a gun in hand. They stand their ground, close in slowly
-  // and shoot at Rico when he is in range.
-  function makeThugMesh() {
-    const g = new THREE.Group();
-    const jacket = new THREE.MeshLambertMaterial({ color: 0x2b2b2b });
-    const skin = new THREE.MeshLambertMaterial({ color: 0xb97a4a });
-    const red = new THREE.MeshLambertMaterial({ color: 0xc0392b });
-    const body = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.7, 0.32), jacket);
-    body.position.y = 1.05;
-    body.castShadow = true;
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.21, 12, 10), skin);
-    head.position.y = 1.58;
-    head.castShadow = true;
-    const band = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.1, 0.44), red);
-    band.position.y = 1.66;
-    const legL = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.72, 0.22), jacket);
-    legL.position.set(-0.14, 0.36, 0);
-    const legR = legL.clone();
-    legR.position.x = 0.14;
-    const armL = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.6, 0.18), jacket);
-    armL.position.set(-0.37, 1.05, 0);
-    const armR = armL.clone();
-    armR.position.x = 0.37;
-    const gun = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.1, 0.4),
-      new THREE.MeshLambertMaterial({ color: 0x111111 }));
-    gun.position.set(0.37, 0.82, 0.25);
-    g.add(body);
-    g.add(head);
-    g.add(band);
-    g.add(legL);
-    g.add(legR);
-    g.add(armL);
-    g.add(armR);
-    g.add(gun);
-    g.userData.legL = legL;
-    g.userData.legR = legR;
-    g.userData.gun = gun;
-    return g;
-  }
-
-  function makeThug(scene, x, z) {
-    const mesh = makeThugMesh();
-    mesh.position.set(x, 0, z);
-    scene.add(mesh);
-    return {
-      mesh: mesh,
-      x: x,
-      z: z,
-      heading: 0,
-      hp: THUG_HP,
-      shootT: 1 + Math.random() * 0.8,
-      dead: false,
-      deadT: 0,
-      walkPhase: 0,
-    };
-  }
-
-  function hurtThug(thug, dmg, world) {
-    if (thug.dead) return;
-    thug.hp -= dmg;
-    if (thug.hp <= 0) {
-      thug.dead = true;
-      thug.deadT = 0;
-      thug.mesh.rotation.x = -Math.PI / 2; // falls flat on his back
-      thug.mesh.position.y = 0.25;
-      if (world.combat) world.combat.kills++;
-      VP.addHeat(world.wanted, 12); // killing in public draws the law
-      world.lastHeatT = world.time;
-    }
-  }
-
-  function thugsAlive(thugs) {
-    let n = 0;
-    for (const t of thugs) if (!t.dead) n++;
-    return n;
-  }
-
-  // A live thug closes in to shooting range and fires on a timer. Dead
-  // ones lie still for a while, then the city cleans them up. In a staged
-  // screenshot the thugs hold their pose and never shoot.
-  function updateThug(thug, world, dt) {
-    if (thug.dead) {
-      thug.deadT += dt;
-      if (thug.deadT > 12) {
-        thug.mesh.parent.remove(thug.mesh);
-        thug.gone = true;
-      }
-      return;
-    }
-    if (world.shotMode) return;
-    const player = world.player;
-    const dx = player.x - thug.x;
-    const dz = player.z - thug.z;
+export function punch(G) {
+  const C = G.combat;
+  if (C.cooldown > 0 || C.weapon !== 'fists') return false;
+  C.cooldown = 0.35;
+  G.audio.punch();
+  const fx = Math.cos(G.player.angle);
+  const fz = Math.sin(G.player.angle);
+  for (const t of hitTargets(G)) {
+    const dx = t.ref.x - G.player.x;
+    const dz = t.ref.z - G.player.z;
     const d = Math.sqrt(dx * dx + dz * dz);
-    thug.heading = Math.atan2(dx, dz);
-    thug.mesh.rotation.y = thug.heading;
-    if (d > 10 && d < 40) {
-      // Close in slowly, walking, gun still in hand.
-      thug.x += (dx / d) * 2.3 * dt;
-      thug.z += (dz / d) * 2.3 * dt;
-      thug.walkPhase += dt * 8;
-      const swing = Math.sin(thug.walkPhase) * 0.45;
-      thug.mesh.userData.legL.rotation.x = swing;
-      thug.mesh.userData.legR.rotation.x = -swing;
-      thug.mesh.position.set(thug.x, 0, thug.z);
-    }
-    if (d < THUG_RANGE && !player.inCar) {
-      thug.shootT -= dt;
-      if (thug.shootT <= 0) {
-        thug.shootT = THUG_SHOT_EVERY * (0.85 + Math.random() * 0.3);
-        // A hit on Rico: health drops, the vignette flashes red.
-        world.health = Math.max(0, world.health - THUG_SHOT_DAMAGE);
-        world.hurtFlashT = 0.35;
-        VP.shot(world.audio);
-        // The shot's flash shows at the thug's gun.
-        if (world.combat) {
-          world.combat.flash.position.set(thug.x + Math.sin(thug.heading) * 0.8, 1.3, thug.z + Math.cos(thug.heading) * 0.8);
-          world.combat.flash.visible = true;
-          world.combat.flash.material.opacity = 0.9;
-          world.combat.flashT = 0.06;
+    const facing = (dx * fx + dz * fz) / (d || 1);
+    if (d < COMBAT.punchRange && facing > 0.5) {
+      if (t.kind === 'ped') knockDownPed(G, t.ref);
+      else if (t.kind === 'officer') {
+        t.ref.hp -= 1;
+        t.ref.x += fx * 2;
+        t.ref.z += fz * 2;
+        if (t.ref.hp <= 0) {
+          t.ref.mesh.visible = false;
+          t.ref.x = 1e6;
+        }
+      } else if (t.kind === 'enemy') {
+        t.ref.hp -= 1;
+        if (t.ref.hp <= 0) {
+          t.ref.mesh.visible = false;
+          t.ref.x = 1e6;
+          enemyDown(G);
         }
       }
+      return true;
     }
   }
+  return false;
+}
 
-  global.VP = global.VP || {};
-  global.VP.makeCombat = makeCombat;
-  global.VP.grantPistol = grantPistol;
-  global.VP.setWeapon = setWeapon;
-  global.VP.attackPressed = attackPressed;
-  global.VP.startReload = startReload;
-  global.VP.updateCombat = updateCombat;
-  global.VP.makeThug = makeThug;
-  global.VP.hurtThug = hurtThug;
-  global.VP.thugsAlive = thugsAlive;
-  global.VP.updateThug = updateThug;
-  global.VP.PISTOL_MAG = PISTOL_MAG;
-})(typeof window !== 'undefined' ? window : globalThis);
+export function reloadPistol(G) {
+  const C = G.combat;
+  if (C.weapon !== 'pistol' || C.reloading > 0 || C.mag === COMBAT.magSize || C.reserve === 0) return;
+  C.reloading = COMBAT.reloadTime;
+  G.audio.reload();
+}
+
+export function stepCombat(G, dt) {
+  const C = G.combat;
+  if (C.cooldown > 0) C.cooldown -= dt;
+  if (C.reloading > 0) {
+    C.reloading -= dt;
+    if (C.reloading <= 0) {
+      const need = COMBAT.magSize - C.mag;
+      const take = Math.min(need, C.reserve);
+      C.mag += take;
+      C.reserve -= take;
+    }
+  }
+  if (C.flashTimer > 0) {
+    C.flashTimer -= dt;
+    if (C.flashTimer <= 0) {
+      C.flash.visible = false;
+      C.flashLight.intensity = 0;
+    }
+  }
+  // The pistol rides in the player's right hand when drawn.
+  C.pistol.visible = G.combat.weapon === 'pistol' && !G.inCar;
+  if (C.pistol.visible) {
+    const a = G.player.angle;
+    C.pistol.position.set(
+      G.player.x + Math.cos(a) * 0.45 - Math.sin(a) * 0.3,
+      1.25,
+      G.player.z + Math.sin(a) * 0.45 + Math.cos(a) * 0.3,
+    );
+    C.pistol.rotation.y = -a;
+  }
+}
+
+/** Ambush enemies for mission 4: armed men who shoot back (slowly). */
+export function spawnEnemy(G, scene, x, z) {
+  const group = new THREE.Group();
+  const dark = new THREE.MeshLambertMaterial({ color: 0x3a1a1a });
+  const skin = new THREE.MeshLambertMaterial({ color: 0xc98a5a });
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.9, 0.34), dark);
+  body.position.y = 1.05;
+  body.castShadow = true;
+  group.add(body);
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.42, 0.42), skin);
+  head.position.y = 1.72;
+  group.add(head);
+  const gun = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.14, 0.42), new THREE.MeshLambertMaterial({ color: 0x111111 }));
+  gun.position.set(0.35, 1.1, 0.3);
+  group.add(gun);
+  group.position.set(x, 0, z);
+  scene.add(group);
+  const enemy = { mesh: group, x, z, angle: 0, hp: 3, shootTimer: 1.5, walkPhase: 0 };
+  G.combat.enemies.push(enemy);
+  return enemy;
+}
+
+export function stepEnemies(G, dt) {
+  for (const en of G.combat.enemies) {
+    if (en.hp <= 0) continue;
+    const dx = G.player.x - en.x;
+    const dz = G.player.z - en.z;
+    const dist = Math.sqrt(dx * dx + dz * dz) || 1;
+    en.angle = Math.atan2(dz, dx);
+    if (dist > 12) {
+      en.x += Math.cos(en.angle) * 4.5 * dt;
+      en.z += Math.sin(en.angle) * 4.5 * dt;
+    }
+    en.shootTimer -= dt;
+    if (en.shootTimer <= 0 && dist < 40) {
+      en.shootTimer = 1.6;
+      // A wild shot: it can hit the player.
+      if (G.rng.chance(0.45)) {
+        G.player.health = Math.max(0, G.player.health - 9);
+        G.hud.damageFlash();
+        G.audio.enemyShot();
+      } else {
+        G.audio.enemyShot();
+      }
+    }
+    en.mesh.position.set(en.x, 0, en.z);
+    en.mesh.rotation.y = -en.angle + Math.PI / 2;
+  }
+}
