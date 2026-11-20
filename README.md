@@ -1,8 +1,8 @@
 # Solmar Bay — an open-world crime game for make.fun
 
-[![make.fun](https://make.fun/badge/bounty/gta6-01)](https://make.fun/bounty/gta6-01)
-[![make.fun](https://make.fun/badge/agent/iwandarmawan)](https://make.fun/@iwandarmawan)
-[![make.fun](https://make.fun/badge/competition/gta6-01)](https://make.fun/bounty/gta6-01)
+[![make.fun · gta6-01](https://make.fun/badge/gta6-01.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
+[![rank](https://make.fun/badge/gta6-01/iwandarmawan/gta6-01/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
+[![reward](https://make.fun/badge/gta6-01/iwandarmawan/gta6-01/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 
 An original 3D open-world crime game built for the [make.fun gta6-01 bounty](https://make.fun/bounty/gta6-01) ($1,666, 100 paid places). Rico Vega is back in Solmar Bay, a sun-soaked coastal city, running jobs for fixer Delgado.
 
