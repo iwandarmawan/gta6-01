@@ -1,8 +1,9 @@
 // shots.js — Solmar Bay screenshot staging: ?shot=start|play|chase|mission
 // (plus &seed=N) puts the game into a fixed, reproducible scene so the
 // four screenshots are real renders of the game's own code: a hero
-// boulevard cover, on-foot plaza life, a police chase, and a mission run.
-// The staging runs after the world is built and before the first frame.
+// boulevard cover, a combat standoff in the plaza, a police chase, and a
+// timed delivery run. The staging runs after the world is built and
+// before the first frame.
 (function (global) {
   'use strict';
 
@@ -51,24 +52,41 @@
       world.message = 'Delgado: "Take any car and bring it to the plaza marker."';
       world.messageT = 10;
     } else if (name === 'play') {
-      // On foot in the plaza: pedestrians strolling, traffic passing on
-      // the avenue, the mission marker glowing in the distance.
-      putOnFoot(world, plaza.x + 8, plaza.z + 10, Math.PI * 0.7);
-      // A few extra pedestrians near the plaza for a lively frame.
-      for (let i = 0; i < 4; i++) {
-        const ped = VP.makePedestrian(world.scene, world.rng, city);
-        ped.x = plaza.x + world.rng.range(-14, 14);
-        ped.z = plaza.z + world.rng.range(-14, 14);
-        ped.mesh.position.set(ped.x, 0, ped.z);
-        world.pedestrians.push(ped);
-      }
+      // Combat: Rico on foot in the plaza, pistol raised and firing, a
+      // thug going down ahead of him, a pedestrian running for cover.
+      // The muzzle flash is frozen on so the shot reads in the frame.
+      const ricoX = plaza.x + 8;
+      const ricoZ = plaza.z + 12;
+      const thugX = plaza.x + 5;
+      const thugZ = plaza.z + 4;
+      const heading = Math.atan2(thugX - ricoX, thugZ - ricoZ);
+      putOnFoot(world, ricoX, ricoZ, heading);
+      world.camYaw = heading;
+      VP.grantPistol(world.combat, world.player);
+      world.player.aimT = 99; // gun arm stays raised for the photo
+      const thug = VP.makeThug(world.scene, thugX, thugZ);
+      thug.heading = Math.atan2(ricoX - thugX, ricoZ - thugZ);
+      thug.mesh.rotation.y = thug.heading;
+      world.thugs.push(thug);
+      // One shot at the thug: the flash fires, the tracer draws, and the
+      // thug takes the hit (34 damage — still standing, aiming back).
+      VP.attackPressed(world.combat, world);
+      world.combat.flashT = 999; // freeze the flash on for the screenshot
+      // A pedestrian near the plaza runs from the gunshot, in frame.
+      const ped = world.pedestrians[0];
+      ped.x = plaza.x - 6;
+      ped.z = plaza.z + 2;
+      ped.mesh.position.set(ped.x, 0, ped.z);
+      ped.fleeT = 99;
+      ped.targetX = ped.x - 30;
+      ped.targetZ = ped.z + 20;
       world.cameraMode = 'fixed';
       world.camFixed = {
-        pos: [plaza.x + 22, 6, plaza.z + 26],
-        look: [plaza.x - 8, 2, plaza.z - 14],
+        pos: [ricoX + 5, 3.5, ricoZ + 7],
+        look: [thugX, 1.4, thugZ],
       };
       world.mission.active = true;
-      world.message = 'Objective: steal a car and drive to the plaza marker';
+      world.message = 'Delgado: "Take this. Things get loud from here."';
       world.messageT = 10;
     } else if (name === 'chase') {
       // Police chase: three wanted stars, two police cars right behind
@@ -94,19 +112,21 @@
       world.message = 'WANTED — 3 stars! Lose the cops!';
       world.messageT = 10;
     } else if (name === 'mission') {
-      // Mission in progress: the player's sedan on the plaza avenue,
-      // nearly at the waypoint — beacon column and fountain ahead,
-      // downtown towers beyond. A fixed three-quarter camera frames the
-      // car, the marker and the plaza in one shot.
-      putInCar(world, 'sedan', 0x27ae60, -8, -27, -Math.PI / 2, 8);
+      // Clockwork: mission 3 in progress, the player's sedan racing the
+      // 90-second clock toward the beach house, the countdown big on the
+      // HUD and the beacon glowing over the sand ahead.
+      VP.startMission(world.mission, 3, city);
+      world.mission.timer = 72; // 01:12 left on the clock for the photo
+      putInCar(world, 'sedan', 0x27ae60, 180, 96, Math.PI / 2, 9);
+      // Camera on the road behind the car, looking east down the avenue:
+      // the sedan, the beacon over the beach house and the sea ahead.
       world.cameraMode = 'fixed';
       world.camFixed = {
-        pos: [16, 7, -38],
-        look: [-20, 3, -22],
+        pos: [148, 7, 96],
+        look: [235, 1.5, 96],
       };
-      world.autoDrive = true; // creep toward the marker for the screenshot
-      world.mission.active = true;
-      world.message = 'Objective: drive to the plaza marker';
+      world.autoDrive = true; // roll east toward the beach house
+      world.message = 'Clockwork — 72 seconds to the beach house!';
       world.messageT = 10;
     } else {
       // Unknown shot name: just start playing at the plaza.

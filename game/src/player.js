@@ -1,6 +1,8 @@
-// player.js — Rico Vega on foot: third-person walk, run, jump, and
-// getting in and out of cars. The player is a simple low-poly figure
-// with swinging legs, a collision circle and a camera orbit.
+// player.js — Rico Vega on foot: third-person walk, run, jump, getting
+// in and out of cars, and now fighting: fists up front, a pistol in the
+// right hand once Delgado hands it over, and an aim pose when he fires.
+// The player is a simple low-poly figure with swinging legs, a collision
+// circle and a camera orbit.
 (function (global) {
   'use strict';
 
@@ -26,6 +28,11 @@
     armL.position.set(-0.36, 1.05, 0);
     const armR = armL.clone();
     armR.position.x = 0.36;
+    // Arms hang from a shoulder pivot so the right one can rise to aim.
+    armL.geometry.translate(0, 0.3, 0);
+    armL.position.set(-0.36, 1.32, 0);
+    armR.geometry.translate(0, 0.3, 0);
+    armR.position.set(0.36, 1.32, 0);
     g.add(body);
     g.add(head);
     g.add(hair);
@@ -55,13 +62,49 @@
       radius: 0.55,
       inCar: null, // the car being driven, or null
       grounded: true,
+      // Fighting state: the weapon in hand and the punch/aim animation.
+      weapon: 'fists',
+      punchT: 0, // seconds left of the punch swing
+      aimT: 0, // seconds left of the raised-arm aim pose
     };
+  }
+
+  // The right arm rises to point the gun forward for a short beat after
+  // every shot; a punch swings it forward hard and fast instead.
+  function poseArms(player, dt, moving) {
+    const armR = player.mesh.userData.armR;
+    const armL = player.mesh.userData.armL;
+    if (player.punchT > 0) {
+      player.punchT -= dt;
+      armR.rotation.x = -1.5 * (player.punchT / 0.25);
+      armL.rotation.x = 0.4;
+      return;
+    }
+    if (player.aimT > 0) {
+      player.aimT -= dt;
+      armR.rotation.x = -1.35; // gun arm level, pointing ahead
+      armL.rotation.x = -0.5;
+      return;
+    }
+    if (player.weapon === 'pistol') {
+      // At rest the pistol hangs low, muzzle down.
+      armR.rotation.x = -0.25;
+      armL.rotation.x = moving ? -Math.sin(player.walkPhase) * 0.4 : 0;
+      return;
+    }
+    // Fists: both arms swing with the walk.
+    const swing = moving ? Math.sin(player.walkPhase) * 0.55 : 0;
+    armL.rotation.x = -swing * 0.7;
+    armR.rotation.x = swing * 0.7;
   }
 
   // Move on foot. input: {forward, strafe, run, jump} in camera space;
   // camYaw is the camera's yaw so W always walks away from the camera.
   function updatePlayer(player, input, camYaw, dt, colliders, bounds) {
     const walkSpeed = input.run ? 7.5 : 3.8;
+    // Aiming the pistol slows Rico to a careful walk — no sprinting
+    // down a sight line.
+    const speed = player.aimT > 0.1 ? Math.min(walkSpeed, 2.4) : walkSpeed;
     const fx = Math.sin(camYaw);
     const fz = Math.cos(camYaw);
     // Screen right is forward x up = (-cos yaw, sin yaw): D must step that way.
@@ -73,7 +116,7 @@
     if (len > 0.01) {
       mx /= len;
       mz /= len;
-      player.speed = walkSpeed;
+      player.speed = speed;
       player.heading = Math.atan2(mx, mz);
     } else {
       player.speed = 0;
@@ -106,20 +149,17 @@
         player.grounded = true;
       }
     }
-    // Walk cycle: legs and arms swing, body bobs a little.
+    // Walk cycle: legs swing, body bobs a little, arms follow the pose.
     if (player.speed > 0.1) {
       player.walkPhase += dt * player.speed * 1.9;
       const swing = Math.sin(player.walkPhase) * 0.55;
       player.mesh.userData.legL.rotation.x = swing;
       player.mesh.userData.legR.rotation.x = -swing;
-      player.mesh.userData.armL.rotation.x = -swing * 0.7;
-      player.mesh.userData.armR.rotation.x = swing * 0.7;
     } else {
       player.mesh.userData.legL.rotation.x *= 0.8;
       player.mesh.userData.legR.rotation.x *= 0.8;
-      player.mesh.userData.armL.rotation.x *= 0.8;
-      player.mesh.userData.armR.rotation.x *= 0.8;
     }
+    poseArms(player, dt, player.speed > 0.1);
     player.mesh.position.set(player.x, player.y, player.z);
     // Face the walking direction; ease the turn so it never snaps.
     let dh = player.heading - player.mesh.rotation.y;

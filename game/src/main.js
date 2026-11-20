@@ -2,6 +2,8 @@
 // Builds the world, wires input, runs the states (menu, playing, paused,
 // busted, wasted) and the third-person / chase cameras. The game reads
 // ?seed=N for its deterministic city and ?shot=<name> for screenshot poses.
+// v2 adds combat (fists + pistol), missions 2-4 with chaining and retries,
+// roadblocks, finished car damage, and a pause menu that lists the arc.
 (function (global) {
   'use strict';
 
@@ -38,12 +40,15 @@
     camDragUntil: 0,
     cash: 120,
     health: 100,
+    hurtFlashT: 0, // red flash after taking a bullet
     clockMinutes: 600, // 10:00 in the morning
     message: '',
     messageT: 0,
     steals: 0,
     lastHeatT: -100, // last time a crime raised the wanted heat
     lastPedHitT: -10, // last time a pedestrian was hit (rate-limit)
+    gunshotThreat: null, // pedestrians flee from a recent shot
+    roadblocksOn: false,
     time: 0,
   };
 
@@ -73,7 +78,7 @@
   for (let i = 0; i < 24; i++) pedestrians.push(VP.makePedestrian(scene, rng, city));
   world.pedestrians = pedestrians;
 
-  // The player, the mission, the wanted level, the pickups.
+  // The player, the mission, the wanted level, the police, the pickups.
   const player = VP.makePlayer(city.plaza.x + 8, city.plaza.z + 10);
   scene.add(player.mesh);
   world.player = player;
@@ -83,13 +88,21 @@
   world.wanted = wanted;
   const police = [];
   world.police = police;
+  const thugs = [];
+  world.thugs = thugs;
+  const roadblocks = [];
+  world.roadblocks = roadblocks;
   const pickups = VP.makePickups(scene, rng, city, 12);
   world.pickups = pickups;
   const beacon = VP.makeBeacon(scene);
   world.beacon = beacon;
+  const combat = VP.makeCombat(scene);
+  world.combat = combat;
   const hud = VP.makeHud();
   const audio = VP.makeAudio();
+  world.audio = audio;
   const smokeAcc = { t: 0, puffs: [] };
+  world.smokeAcc = smokeAcc; // exposed for play-tests
 
   // Load a save, if one exists.
   let save = null;
@@ -119,6 +132,8 @@
   let dragging = false;
   let lastMouseX = 0;
   let lastMouseY = 0;
+  let downX = 0;
+  let downY = 0;
   window.addEventListener('keydown', function (e) {
     if (e.code === 'Space') e.preventDefault();
     keys[e.code] = true;
@@ -129,17 +144,26 @@
     if (e.code === 'KeyP' || e.code === 'Escape') togglePause();
     if (e.code === 'KeyR' && (world.state === 'busted' || world.state === 'wasted')) restart();
     if (e.code === 'KeyE' && world.state === 'playing') toggleEnterExit();
+    if (e.code === 'KeyF' && world.state === 'playing' && !player.inCar) VP.attackPressed(combat, world);
+    if (e.code === 'KeyR' && world.state === 'playing' && !player.inCar) VP.startReload(combat, world);
+    if (e.code === 'KeyN' && world.state === 'playing') skipMissionWait();
   });
   window.addEventListener('keyup', function (e) {
     keys[e.code] = false;
   });
   renderer.domElement.addEventListener('mousedown', function (e) {
     dragging = true;
+    downX = e.clientX;
+    downY = e.clientY;
     lastMouseX = e.clientX;
     lastMouseY = e.clientY;
     VP.startAudio(audio);
   });
-  window.addEventListener('mouseup', function () {
+  window.addEventListener('mouseup', function (e) {
+    // A click that barely moved the mouse is a shot, not a camera drag.
+    if (dragging && Math.abs(e.clientX - downX) < 6 && Math.abs(e.clientY - downY) < 6) {
+      if (world.state === 'playing' && !player.inCar) VP.attackPressed(combat, world);
+    }
     dragging = false;
   });
   window.addEventListener('mousemove', function (e) {
@@ -192,14 +216,31 @@
   function togglePause() {
     if (world.state === 'playing') {
       world.state = 'paused';
+      VP.updatePauseList(hud, mission, world.cash);
       showOverlay('pause');
     } else if (world.state === 'paused') {
       world.state = 'playing';
       showOverlay(null);
     }
   }
+  // N skips the wait between missions: take the next job now, or retry a
+  // failed one right away instead of waiting for Delgado's timer.
+  function skipMissionWait() {
+    if (mission.done && mission.nextT > 0 && mission.current < 4) {
+      VP.startMission(mission, mission.current + 1, city);
+      showMessage(mission.message, 8);
+    } else if (mission.failed && mission.retryT > 0) {
+      VP.startMission(mission, mission.current, city);
+      showMessage(mission.message, 8);
+    }
+  }
+  function clearThugs() {
+    for (const t of thugs) scene.remove(t.mesh);
+    thugs.length = 0;
+  }
   function restart() {
-    // Back on foot at the plaza, wanted cleared, health restored, a fine paid.
+    // Back on foot at the plaza, wanted cleared, health restored, a fine
+    // paid — and the CURRENT mission starts over, not mission 1.
     if (player.inCar) {
       player.inCar.speed = 0;
       player.inCar = null;
@@ -209,19 +250,26 @@
     player.y = 0;
     player.mesh.visible = true;
     player.mesh.position.set(player.x, 0, player.z);
+    player.weapon = 'fists';
+    if (player.mesh.userData.gun) player.mesh.userData.gun.visible = false;
+    combat.weapon = 'fists';
+    combat.ammo = 0;
+    combat.reserve = 0;
+    combat.reloadT = 0;
+    clearThugs();
+    world.roadblocksOn = false;
+    VP.syncRoadblocks(scene, roadblocks, false, mission.spots.roadblocks);
     world.cash = Math.max(0, world.cash - (world.state === 'busted' ? 100 : 150));
     world.health = 100;
+    world.hurtFlashT = 0;
     wanted.heat = 0;
     wanted.stars = 0;
     wanted.bustedT = 0;
     for (const car of police) scene.remove(car.mesh);
     police.length = 0;
-    mission.active = false;
-    mission.done = false;
-    mission.failed = false;
+    VP.startMission(mission, mission.current, city);
     world.state = 'playing';
     showOverlay(null);
-    VP.startMission(mission, 1, city);
     showMessage(mission.message, 8);
     saveGame();
   }
@@ -271,6 +319,7 @@
       world.messageT -= dt;
       if (world.messageT <= 0) world.message = '';
     }
+    if (world.hurtFlashT > 0) world.hurtFlashT -= dt;
 
     const input = {
       forward: (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0),
@@ -305,6 +354,7 @@
         car.speed = 0;
         VP.exitCar(player, car);
         world.health = Math.max(0, world.health - 25);
+        world.hurtFlashT = 0.4;
         showMessage('Your car is wrecked!', 4);
       }
     } else {
@@ -313,9 +363,19 @@
 
     // Traffic and pedestrians keep the city alive. A crash threat is
     // worked out first, so nearby pedestrians flee from it this frame.
-    for (const car of traffic) VP.updateTrafficCar(car, dt, rng, city, traffic.concat(playerCars));
-    let threat = null;
-    if (player.inCar && Math.abs(playerSpeed) > 8) {
+    // Roadblock cruisers are obstacles too, and traffic stops for a
+    // pedestrian crossing ahead.
+    const blockers = VP.roadblockCars(world.roadblocks);
+    for (const car of traffic) {
+      VP.updateTrafficCar(car, dt, rng, city, traffic.concat(playerCars, blockers), pedestrians);
+      if (car.damage >= 0.35) VP.carSmoke(scene, car, dt, smokeAcc);
+    }
+    // A damaged parked player car smokes too, not just the one driven.
+    for (const car of playerCars) {
+      if (car !== player.inCar && car.damage >= 0.25) VP.carSmoke(scene, car, dt, smokeAcc);
+    }
+    let threat = world.gunshotThreat;
+    if (!threat && player.inCar && Math.abs(playerSpeed) > 8) {
       for (const ped of pedestrians) {
         const dx = ped.x - player.x;
         const dz = ped.z - player.z;
@@ -327,14 +387,15 @@
     // The player's car shoving a pedestrian is a crime — but one hit is
     // one crime, not one per frame, so it is rate-limited. Staged
     // screenshots never raise heat: the pose is the point, not the crime.
-    if (threat && !world.shotMode && world.time - (world.lastPedHitT || -10) > 3) {
+    if (threat && !world.gunshotThreat && !world.shotMode && world.time - (world.lastPedHitT || -10) > 3) {
       VP.addHeat(wanted, 15);
       world.lastHeatT = world.time;
       world.lastPedHitT = world.time;
       showMessage('You hit a pedestrian!', 3);
     }
 
-    // Car-to-car bumps: the player's car against traffic.
+    // Car-to-car bumps: the player's car against traffic. A hard bump
+    // damages both cars; a wrecked traffic car stops dead and smokes.
     if (player.inCar) {
       for (const other of traffic) {
         const dx = other.x - player.inCar.x;
@@ -350,7 +411,8 @@
           other.x += nx * push;
           other.z += nz * push;
           if (Math.abs(playerSpeed) > 10) {
-            player.inCar.damage = Math.min(1, player.inCar.damage + 0.08);
+            VP.damageCar(player.inCar, 0.08);
+            VP.damageCar(other, 0.05);
             VP.addHeat(wanted, 8);
             world.lastHeatT = world.time;
           }
@@ -358,12 +420,25 @@
       }
     }
 
+    // Combat: reloads, flashes, tracers, and the thugs shooting back.
+    VP.updateCombat(combat, world, dt);
+    for (let i = thugs.length - 1; i >= 0; i--) {
+      VP.updateThug(thugs[i], world, dt);
+      if (thugs[i].gone) thugs.splice(i, 1);
+    }
+    VP.syncRoadblocks(scene, roadblocks, world.roadblocksOn, mission.spots.roadblocks);
+
     // Wanted level and police. The heat cools off only when the player
     // has not committed a crime for a while; a fresh crime resets the clock.
     const seen = world.time - (world.lastHeatT || -100) < 5;
-    VP.updateWanted(wanted, dt, seen);
-    VP.syncPolice(scene, police, wanted, rng, city, player.x, player.z);
     let nearestPolice = 999;
+    for (const car of police) {
+      const dx = car.x - player.x;
+      const dz = car.z - player.z;
+      nearestPolice = Math.min(nearestPolice, Math.sqrt(dx * dx + dz * dz));
+    }
+    VP.updateWanted(wanted, dt, seen, nearestPolice);
+    VP.syncPolice(scene, police, wanted, rng, city, player.x, player.z);
     for (const car of police) {
       const d = VP.updatePoliceCar(car, player.x, player.z, dt, city.colliders, city.bounds, rng);
       nearestPolice = Math.min(nearestPolice, d);
@@ -373,7 +448,7 @@
         const dz = car.z - player.inCar.z;
         const dd = Math.sqrt(dx * dx + dz * dz);
         if (dd < player.inCar.radius + car.radius && dd > 0.01) {
-          player.inCar.damage = Math.min(1, player.inCar.damage + 0.05);
+          VP.damageCar(player.inCar, 0.05);
           player.inCar.x -= (dx / dd) * 0.6;
           player.inCar.z -= (dz / dd) * 0.6;
         }
@@ -384,13 +459,16 @@
     }
     if (world.health <= 0) endRun('wasted');
 
-    // Mission 1 and cash pickups. The reward is paid once: updateMission1
-    // keeps returning 'done' after completion, so a flag guards the payout.
-    const missionResult = VP.updateMission1(mission, player, dt);
+    // Missions 1-4, chained: finishing one pays out and starts the next
+    // after a short beat; failing one retries after Delgado's timer.
+    const missionResult = VP.updateMission(mission, world, dt);
     if (missionResult === 'done' && !mission.rewardPaid) {
       mission.rewardPaid = true;
-      world.cash += 250;
-      mission.best = Math.max(mission.best, 1);
+      const m = VP.MISSIONS[mission.current - 1];
+      world.cash += m.reward;
+      mission.best = Math.max(mission.best, mission.current);
+      // Delgado resupplies the pistol after every job.
+      if (combat.weapon === 'pistol') combat.reserve = Math.min(96, combat.reserve + 24);
       VP.sting(audio);
       showMessage(mission.message, 6);
       saveGame();
@@ -434,14 +512,22 @@
     }
 
     // --- HUD ---------------------------------------------------------------
+    const currentMission = VP.MISSIONS[mission.current - 1];
     VP.updateHud(hud, {
       cash: world.cash,
       health: world.health,
+      hurtFlash: world.hurtFlashT,
       wanted: wanted.stars,
       speedKmh: playerSpeed * 3.6,
       inCar: !!player.inCar,
       running: input.run,
-      objective: mission.active ? VP.MISSIONS[mission.current - 1].objective : 'Free roam — explore Solmar Bay',
+      weapon: combat.weapon,
+      ammo: combat.ammo,
+      reserve: combat.reserve,
+      reloading: combat.reloadT > 0,
+      hitmark: combat.hitmarkT,
+      timer: mission.active && currentMission.kind === 'timed' ? mission.timer : 0,
+      objective: mission.active ? currentMission.objective : 'Free roam — explore Solmar Bay',
       clockMinutes: world.clockMinutes,
       message: world.message,
     });
@@ -449,6 +535,9 @@
       city: city,
       traffic: traffic,
       police: police,
+      thugs: thugs,
+      roadblocks: roadblocks,
+      roadblocksOn: world.roadblocksOn,
       mission: mission,
       playerX: player.x,
       playerZ: player.z,
@@ -487,5 +576,7 @@
   window.__VP.player = player;
   window.__VP.mission = mission;
   window.__VP.wanted = wanted;
+  window.__VP.combat = combat;
+  window.__VP.thugs = thugs;
   requestAnimationFrame(loop);
 })(typeof window !== 'undefined' ? window : globalThis);

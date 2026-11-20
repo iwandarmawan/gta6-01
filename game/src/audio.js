@@ -97,6 +97,56 @@
     setTimeout(function () { blip(audio, 784, 0.3, 0.25); }, 260);
   }
 
+  function failSting(audio) {
+    if (!audio.started) return;
+    // Mission failed: two falling notes, low and slow.
+    blip(audio, 392, 0.2, 0.22);
+    setTimeout(function () { blip(audio, 262, 0.35, 0.22); }, 200);
+  }
+
+  // A gunshot is a burst of white noise through a low-pass filter: a
+  // sharp crack that decays in a tenth of a second. The noise buffer is
+  // built once and reused for every shot.
+  function noiseBurst(audio, dur, vol, freq) {
+    if (!audio.started) return;
+    if (!audio.noiseBuf) {
+      const len = Math.floor(audio.ctx.sampleRate * 0.3);
+      audio.noiseBuf = audio.ctx.createBuffer(1, len, audio.ctx.sampleRate);
+      const data = audio.noiseBuf.getChannelData(0);
+      for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+    }
+    const t = audio.ctx.currentTime;
+    const src = audio.ctx.createBufferSource();
+    src.buffer = audio.noiseBuf;
+    const filter = audio.ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = freq || 1800;
+    const gain = audio.ctx.createGain();
+    gain.gain.setValueAtTime(vol || 0.5, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + (dur || 0.12));
+    src.connect(filter);
+    filter.connect(gain);
+    gain.connect(audio.master);
+    src.start(t);
+    src.stop(t + (dur || 0.12) + 0.02);
+  }
+
+  function shot(audio) {
+    // Every shot cracks a little differently so a firefight never sounds looped.
+    noiseBurst(audio, 0.12, 0.5, 1800 * (0.9 + Math.random() * 0.2));
+    blip(audio, 180, 0.06, 0.25); // the low thump under the crack
+  }
+
+  function thud(audio) {
+    noiseBurst(audio, 0.09, 0.35, 500); // a punch landing: dull and short
+  }
+
+  function reloadSound(audio) {
+    if (!audio.started) return;
+    blip(audio, 1200, 0.05, 0.18);
+    setTimeout(function () { blip(audio, 900, 0.05, 0.18); }, 220);
+  }
+
   function setMuted(audio, muted) {
     audio.muted = muted;
     if (audio.started && audio.master) {
@@ -111,5 +161,9 @@
   global.VP.setSiren = setSiren;
   global.VP.blip = blip;
   global.VP.sting = sting;
+  global.VP.failSting = failSting;
+  global.VP.shot = shot;
+  global.VP.thud = thud;
+  global.VP.reloadSound = reloadSound;
   global.VP.setMuted = setMuted;
 })(typeof window !== 'undefined' ? window : globalThis);

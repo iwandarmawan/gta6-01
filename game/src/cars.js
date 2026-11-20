@@ -155,6 +155,9 @@
   function driveCar(car, input, dt, colliders, bounds) {
     const spec = car.spec;
     const top = spec.top * (1 - car.damage * 0.45);
+    // A car on fire (damage >= 0.8) keeps burning until it wrecks: the
+    // driver has to bail out or find a new ride before it goes.
+    if (car.damage >= 0.8 && car.damage < 1) car.damage = Math.min(1, car.damage + dt * 0.02);
     // Steering follows speed: full lock only when slow, gentler when fast.
     const steerTarget = input.steer * (0.55 / (1 + Math.abs(car.speed) * 0.03));
     car.steer += (steerTarget - car.steer) * Math.min(1, dt * 8);
@@ -213,15 +216,26 @@
     return hit;
   }
 
+  // Damage a car by a set amount: bumps, rams and bullets all call this.
+  // Returns true when the hit wrecks the car outright.
+  function damageCar(car, amount) {
+    car.damage = Math.min(1, car.damage + amount);
+    return car.damage >= 1;
+  }
+
   // A puff of dark smoke above a damaged car; call once per frame while hurt.
+  // Past 0.8 damage the car is on fire: the smoke turns orange and thick.
   function carSmoke(scene, car, dt, accumulator) {
     if (car.damage < 0.35) return;
     accumulator.t += dt;
     if (accumulator.t < 0.12) return;
     accumulator.t = 0;
+    const onFire = car.damage >= 0.8;
     const puff = new THREE.Mesh(
-      new THREE.SphereGeometry(0.35, 6, 5),
-      new THREE.MeshBasicMaterial({ color: 0x555555, transparent: true, opacity: 0.6 })
+      new THREE.SphereGeometry(onFire ? 0.45 : 0.35, 6, 5),
+      new THREE.MeshBasicMaterial({
+        color: onFire ? 0xcc5500 : 0x555555, transparent: true, opacity: 0.6,
+      })
     );
     puff.position.set(car.x + (Math.random() - 0.5), 1.4, car.z + (Math.random() - 0.5));
     scene.add(puff);
@@ -250,6 +264,7 @@
   global.VP.makeLightBar = makeLightBar;
   global.VP.makeCar = makeCar;
   global.VP.driveCar = driveCar;
+  global.VP.damageCar = damageCar;
   global.VP.collideCircleAABB = collideCircleAABB;
   global.VP.carSmoke = carSmoke;
   global.VP.updateSmoke = updateSmoke;

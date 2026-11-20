@@ -1,6 +1,7 @@
-// hud.js — Solmar Bay HUD: cash, health, wanted stars, speed, objective,
-// in-game clock, centre messages, damage vignette, and a live minimap
-// drawn on a 2D canvas (roads, beach, player arrow, mission blip, police).
+// hud.js — Solmar Bay HUD: cash, health, wanted stars, speed, ammo,
+// mission countdown, objective, in-game clock, centre messages, hit
+// marker, damage vignette, and a live minimap drawn on a 2D canvas
+// (roads, beach, player arrow, mission blip, police, thugs, roadblocks).
 (function (global) {
   'use strict';
 
@@ -11,14 +12,21 @@
       stars: document.getElementById('hud-stars'),
       speed: document.getElementById('hud-speed'),
       speedLabel: document.getElementById('hud-speed-label'),
+      ammo: document.getElementById('hud-ammo'),
+      timer: document.getElementById('hud-timer'),
       objective: document.getElementById('hud-objective'),
       clock: document.getElementById('hud-clock'),
       message: document.getElementById('hud-message'),
+      hitmark: document.getElementById('hitmark'),
       vignette: document.getElementById('vignette'),
       wantedFlash: document.getElementById('wanted-flash'),
       minimap: document.getElementById('minimap'),
+      pauseMissions: document.getElementById('pause-missions'),
+      pauseCash: document.getElementById('pause-cash'),
       mapCtx: null,
       lastMessage: '',
+      lastAmmo: '',
+      lastTimer: '',
     };
     if (hud.minimap) hud.mapCtx = hud.minimap.getContext('2d');
     return hud;
@@ -26,6 +34,11 @@
 
   function fmtCash(n) {
     return '$' + Math.floor(n).toLocaleString('en-US');
+  }
+
+  function fmtClock(totalSeconds) {
+    const s = Math.max(0, Math.ceil(totalSeconds));
+    return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
   }
 
   function updateHud(hud, state) {
@@ -49,6 +62,33 @@
         hud.speedLabel.textContent = '';
       }
     }
+    // Weapon line: pistol shows the magazine and the reserve, fists show
+    // nothing to count. Reloading flashes RELOADING instead of numbers.
+    if (hud.ammo) {
+      let text = '';
+      if (state.weapon === 'pistol') {
+        text = state.reloading ? 'RELOADING…' :
+          state.ammo === 0 && state.reserve === 0 ? 'NO AMMO' :
+          'PISTOL ' + state.ammo + ' / ' + state.reserve;
+      } else if (state.weapon === 'fists') {
+        text = 'FISTS';
+      }
+      if (text !== hud.lastAmmo) {
+        hud.ammo.textContent = text;
+        hud.ammo.style.color = state.weapon === 'pistol' && state.ammo === 0 ? '#e84a4a' : '#ffffff';
+        hud.lastAmmo = text;
+      }
+    }
+    // The timed-delivery countdown sits big and centred while it runs.
+    if (hud.timer) {
+      const text = state.timer > 0 ? fmtClock(state.timer) : '';
+      if (text !== hud.lastTimer) {
+        hud.timer.textContent = text;
+        hud.timer.style.opacity = text ? '1' : '0';
+        hud.timer.style.color = state.timer <= 15 && state.timer > 0 ? '#ff5a4a' : '#ffd23b';
+        hud.lastTimer = text;
+      }
+    }
     if (hud.objective) hud.objective.textContent = state.objective || '';
     if (hud.clock) {
       const h = Math.floor(state.clockMinutes / 60) % 24;
@@ -66,18 +106,40 @@
         hud.lastMessage = '';
       }
     }
+    // A hit lands as a white X in the middle of the screen, briefly.
+    if (hud.hitmark) hud.hitmark.style.opacity = state.hitmark > 0 ? '1' : '0';
     if (hud.vignette) {
+      // Hurt by gunfire flashes harder than a low-health glow.
       const hurt = state.health < 100 ? (100 - state.health) / 100 : 0;
-      hud.vignette.style.opacity = String(Math.min(0.7, hurt * 0.9));
+      const flash = state.hurtFlash > 0 ? 0.55 : 0;
+      hud.vignette.style.opacity = String(Math.min(0.75, hurt * 0.9 + flash));
     }
     if (hud.wantedFlash) {
       hud.wantedFlash.style.opacity = state.wanted > 0 && Math.floor(performance.now() / 500) % 2 === 0 ? '0.12' : '0';
     }
   }
 
+  // The pause screen lists every mission with its state, so the player can
+  // see the arc: done, current, or still locked — plus the cash on hand.
+  function updatePauseList(hud, mission, cash) {
+    if (!hud.pauseMissions) return;
+    let html = '';
+    for (let i = 0; i < VP.MISSIONS.length; i++) {
+      const m = VP.MISSIONS[i];
+      const mark = i + 1 < mission.current || mission.best >= i + 1 ? '✓' :
+        i + 1 === mission.current ? '▸' : '·';
+      const cls = i + 1 === mission.current ? 'cur' : '';
+      html += '<div class="p-mission ' + cls + '">' + mark + ' ' + (i + 1) + '. ' + m.name +
+        ' — $' + m.reward + (i + 1 === mission.current ? ' (now)' : '') + '</div>';
+    }
+    if (hud.pauseMissions.innerHTML !== html) hud.pauseMissions.innerHTML = html;
+    if (hud.pauseCash) hud.pauseCash.textContent = 'Cash on hand: ' + fmtCash(cash);
+  }
+
   // Draw the minimap: roads as grey lines, the sea on the right, the plaza
   // as a square, the player as a white arrow, the mission as a pulsing
-  // yellow diamond, police as flashing blue/red dots, traffic as grey dots.
+  // yellow diamond, police as flashing blue/red dots, thugs as red dots,
+  // roadblocks as orange squares, traffic as grey dots.
   function drawMinimap(hud, world) {
     const ctx = hud.mapCtx;
     if (!ctx) return;
@@ -123,6 +185,23 @@
     for (const car of world.traffic) {
       const p = toMap(car.x, car.z);
       ctx.fillRect(p[0] - 1.5, p[1] - 1.5, 3, 3);
+    }
+    // Roadblocks: orange squares, only while they are up.
+    if (world.roadblocksOn) {
+      ctx.fillStyle = '#ff8c1a';
+      for (const b of world.roadblocks) {
+        const p = toMap(b.x, b.z);
+        ctx.fillRect(p[0] - 3, p[1] - 3, 6, 6);
+      }
+    }
+    // Thugs: solid red dots.
+    ctx.fillStyle = '#ff3333';
+    for (const t of world.thugs) {
+      if (t.dead || t.gone) continue;
+      const p = toMap(t.x, t.z);
+      ctx.beginPath();
+      ctx.arc(p[0], p[1], 3, 0, Math.PI * 2);
+      ctx.fill();
     }
     // Police dots, flashing.
     const flash = Math.floor(performance.now() / 300) % 2 === 0;
@@ -171,5 +250,6 @@
   global.VP = global.VP || {};
   global.VP.makeHud = makeHud;
   global.VP.updateHud = updateHud;
+  global.VP.updatePauseList = updatePauseList;
   global.VP.drawMinimap = drawMinimap;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -44,7 +44,14 @@
     return ahead;
   }
 
-  function updateTrafficCar(car, dt, rng, city, others) {
+  function updateTrafficCar(car, dt, rng, city, others, pedestrians = []) {
+    // A wrecked car is done driving: it sits there smoking until the
+    // city tows it (it never does — Solmar Bay is like that).
+    if (car.damage >= 1) {
+      car.speed = 0;
+      car.mesh.position.set(car.x, 0, car.z);
+      return;
+    }
     if (car.wait > 0) {
       car.wait -= dt;
       car.speed = 0;
@@ -60,6 +67,19 @@
       const along = dx * fx + dz * fz;
       const side = Math.abs(dx * fz - dz * fx);
       if (along > 0 && along < 8 && side < 2.2) {
+        car.speed = Math.max(0, car.speed - 14 * dt);
+        car.mesh.position.set(car.x, 0, car.z);
+        return;
+      }
+    }
+    // And for a pedestrian crossing right ahead — Solmar Bay drivers
+    // stop for jaywalkers, at least when someone is watching.
+    for (const p of pedestrians) {
+      const dx = p.x - car.x;
+      const dz = p.z - car.z;
+      const along = dx * fx + dz * fz;
+      const side = Math.abs(dx * fz - dz * fx);
+      if (along > 0 && along < 6 && side < 1.6) {
         car.speed = Math.max(0, car.speed - 14 * dt);
         car.mesh.position.set(car.x, 0, car.z);
         return;

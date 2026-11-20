@@ -1,6 +1,7 @@
 // police.js — Solmar Bay wanted level: crimes raise stars, police cars
-// spawn and chase, and getting caught (or wrecked) ends the run.
-// Stars decay when the player stays out of sight for a while.
+// spawn and chase, roadblocks go up when a job goes loud, and getting
+// caught (or wrecked) ends the run. Stars decay when the player stays
+// out of sight for a while.
 (function (global) {
   'use strict';
 
@@ -31,12 +32,14 @@
     wanted.hiddenT = 0;
   }
 
-  function updateWanted(wanted, dt, seen) {
+  // Heat cools off after 12 quiet seconds — faster when no police car is
+  // close enough to see the player, slower while the chase is on.
+  function updateWanted(wanted, dt, seen, nearestPolice) {
     if (!seen) {
       wanted.hiddenT += dt;
-      // After 12 quiet seconds the heat starts to cool off.
       if (wanted.hiddenT > 12) {
-        wanted.heat = Math.max(0, wanted.heat - dt * 4);
+        const rate = nearestPolice > 60 ? 7 : 4;
+        wanted.heat = Math.max(0, wanted.heat - dt * rate);
         wanted.stars = starsFor(wanted.heat);
       }
     } else {
@@ -108,6 +111,80 @@
     }
   }
 
+  // --- roadblocks ------------------------------------------------------------
+  // A roadblock is two police cruisers parked across the road plus three
+  // striped barriers. They do not chase: they sit there, engines running,
+  // and the player has to slip around them or smash through.
+  function makeRoadblock(scene, x, z, heading) {
+    const group = new THREE.Group();
+    const cars = [];
+    const offsets = [-2.6, 2.6];
+    for (const off of offsets) {
+      const cx = x + Math.cos(heading) * off;
+      const cz = z - Math.sin(heading) * off;
+      const car = VP.makeCar('police', 0x111111, cx, cz, heading + Math.PI / 2);
+      const bar = VP.makeLightBar();
+      bar.position.set(0, 1.55, -0.2);
+      car.mesh.add(bar);
+      car.lightBar = bar;
+      car.isPolice = true;
+      car.speed = 0;
+      scene.add(car.mesh);
+      cars.push(car);
+    }
+    const stripeMat = new THREE.MeshLambertMaterial({ color: 0xff8c1a });
+    const whiteMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+    for (let i = -1; i <= 1; i++) {
+      const barrier = new THREE.Group();
+      const beam = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.5, 0.25), i % 2 === 0 ? stripeMat : whiteMat);
+      beam.position.y = 0.9;
+      const legL = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.9, 0.5), stripeMat);
+      legL.position.set(-1.4, 0.45, 0);
+      const legR = legL.clone();
+      legR.position.x = 1.4;
+      barrier.add(beam);
+      barrier.add(legL);
+      barrier.add(legR);
+      barrier.position.set(x + Math.cos(heading) * i * 4, 0, z - Math.sin(heading) * i * 4);
+      barrier.rotation.y = heading;
+      scene.add(barrier);
+      group.add(barrier);
+    }
+    return { x: x, z: z, heading: heading, cars: cars, group: group };
+  }
+
+  // The parked cruisers of every roadblock, flat — traffic treats them
+  // as obstacles, so cars queue behind a roadblock instead of driving
+  // straight through it.
+  function roadblockCars(blocks) {
+    const cars = [];
+    for (const b of blocks) for (const c of b.cars) cars.push(c);
+    return cars;
+  }
+
+  // Put the blocks up or take them down. Spots come from the mission's
+  // story spots, so the escape route is always blocked the same way.
+  function syncRoadblocks(scene, blocks, want, spots) {
+    if (want && blocks.length === 0) {
+      for (const s of spots) blocks.push(makeRoadblock(scene, s.x, s.z, s.heading));
+    }
+    if (!want && blocks.length > 0) {
+      for (const b of blocks) {
+        for (const car of b.cars) scene.remove(car.mesh);
+        for (const child of b.group.children) scene.remove(child);
+      }
+      blocks.length = 0;
+    }
+    // The parked cruisers keep their light bars flashing.
+    for (const b of blocks) {
+      const phase = Math.floor(performance.now() / 180) % 2 === 0;
+      for (const car of b.cars) {
+        car.lightBar.userData.red.material.color.setHex(phase ? 0xff2222 : 0x551111);
+        car.lightBar.userData.blue.material.color.setHex(phase ? 0x111155 : 0x2244ff);
+      }
+    }
+  }
+
   // Busted check: a police car touching the player (on foot or in a slow
   // car) for 2.5 seconds ends the run.
   function updateBusted(wanted, police, playerX, playerZ, inCar, playerSpeed, dt) {
@@ -134,6 +211,9 @@
   global.VP.makePoliceCar = makePoliceCar;
   global.VP.updatePoliceCar = updatePoliceCar;
   global.VP.syncPolice = syncPolice;
+  global.VP.makeRoadblock = makeRoadblock;
+  global.VP.syncRoadblocks = syncRoadblocks;
+  global.VP.roadblockCars = roadblockCars;
   global.VP.updateBusted = updateBusted;
   global.VP.MAX_WANTED = MAX_WANTED;
 })(typeof window !== 'undefined' ? window : globalThis);
