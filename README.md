@@ -4,52 +4,38 @@
 [![rank](https://make.fun/badge/gta6-01/iwandarmawan/gta6-01/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 [![reward](https://make.fun/badge/gta6-01/iwandarmawan/gta6-01/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 
-An original 3D open-world crime game built for the [make.fun gta6-01 bounty](https://make.fun/bounty/gta6-01) ($1,666, 100 paid places). Rico Vega is back in Solmar Bay, a sun-soaked coastal city, running jobs for fixer Delgado.
+An entry for [make.fun gta6-01](https://make.fun/bounty/gta6-01): build the most complete open-world crime game you can, in the spirit of GTA 6 — an original city, original characters, original story. Nothing here is from Rockstar's games: no names, map, art or music of theirs.
 
-## What is in the game
+## The game
 
-- A deterministic 10×10-block coastal city: grid streets, procedural buildings, palms, street lights, a beach with a pier, a central plaza and a park — built from one seed, so every run looks the same.
+Rico Vega is back in Solmar Bay, a sun-soaked coastal city, running jobs for fixer Delgado. Steal cars, lose the heat, deliver on the clock, survive an ambush — and build up enough cash for the Big One.
+
+- A deterministic 10×10-block coastal city: grid streets, procedural buildings, palms, street lights, a beach with a pier-side road, a central plaza with a fountain, a park, and a bridge over the south canal — built from one seed, so every run looks the same.
 - Arcade driving and car stealing: steal any parked or traffic car, chase camera, building collisions, car damage and smoke.
 - On-foot play: walk, run, jump, enter and exit cars, fists and a pistol (hitscan, muzzle flash, 12-round mag, reload).
 - Traffic AI that follows the lanes and stops at junctions, and pedestrians who stroll the sidewalks and flee from gunfire.
 - Wanted 0–5 stars with police cars that chase and ram, officers on foot, roadblocks at 3 stars, and a wanted level that decays when you stay hidden and quiet. Busted and wasted both cost cash.
-- Four playable story jobs: First Wheels ($250), The Getaway ($300), Clockwork — a 90-second timed delivery ($400), and The Informant — an on-foot tail that turns into a pistol ambush ($500). A fifth job unlocks after them.
-- Cash pickups ($50) scattered around the sidewalks, a wanted level that decays when you stay hidden, and a pause menu listing every job with its reward and done state.
-
-## Missions
-
-| Job | What to do | Reward |
-|-----|------------|--------|
-| 1 — First Wheels | Steal any car, drive it to the plaza marker | $250 |
-| 2 — The Getaway | Pick up the package at the docks, escape a 2-star chase to the safehouse | $300 |
-| 3 — Clockwork | Deliver across the city in 90 seconds (fail on timeout, retry offered) | $400 |
-| 4 — The Informant | Meet the informant in the park on foot, survive the ambush, escape at 3 stars | $500 |
-| 5 — The Big One | Locked until the first four jobs are done | $1,000 |
-- HUD with cash, health, wanted stars, speed, ammo, objective line, mission countdown and a live canvas minimap; WebAudio synth sound (engine, sirens, gunshots, stings); localStorage save.
+- Five story jobs: First Wheels ($250), The Getaway ($300), Clockwork — a 90-second timed delivery ($400), The Informant — an on-foot tail that turns into a pistol ambush ($500), and The Big One ($1,200), locked until the first four are done. Cash pickups ($50) are scattered around the sidewalks.
+- HUD with cash, health, wanted stars, speed, ammo, mission objective, a live in-game clock and a mission countdown, plus a live canvas minimap (roads, player arrow, mission blip, police dots).
+- Synthesised WebAudio sound (engine hum, sirens, gunshots, pickup blips, mission stings — no audio files), localStorage save, pause menu with the job list.
 
 ## How to play
 
-Serve the game folder and open it in a desktop browser:
+Serve it locally with `node serve.ts`, then open http://localhost:8080.
 
-```sh
-node serve.ts
-# open http://localhost:8080
-```
+- Drive: `W` `A` `S` `D`
+- On foot: `W` `A` `S` `D` + `Shift` to run, `Space` to jump
+- `E` enter / steal a car, `1` / `2` fists / pistol, click to shoot, `F` punch, `R` reload
+- `P` pause and see the job list, `M` mute
 
-W A S D drive / walk · E enter or steal a car · Space jump / handbrake · F punch · Click shoot · R reload · 1 fists / 2 pistol · P pause · M mute.
+## How it is built
+
+Three.js r160 (vendored at `game/vendor/three.min.js`), plain ES modules under `game/src/` — one file per system: city, cars, traffic, pedestrians, police, combat, missions, audio, HUD/minimap, save, input, render. No network request at play time, no build step.
 
 ## Screenshots
 
-The four screenshots in `screenshots/` are real renders of the game's own code, staged with `?shot=start|play|chase|mission&seed=1`: the cover avenue, combat in the plaza, a 3-star police chase, and the timed delivery.
+Four real renders of the game's own code: the cover avenue, on-foot combat in the plaza, a 3-star police chase, and the Clockwork delivery against the clock.
 
-## Files
+## What the judge sees
 
-- `game/index.html` — the page: WebGL canvas, DOM HUD, menu panels.
-- `game/vendor/three.min.js` — three.js r160, vendored from the official CDN.
-- `game/src/` — one system per file: `config` (tuning), `rng` (seeded random), `city` (the world), `cars` (bodies + arcade driving), `traffic`, `peds`, `police` (wanted + pursuit), `combat` (fists + pistol), `missions` (jobs 1–4 + pickups), `audio` (WebAudio synth), `hud` (DOM + minimap), `save`, `input`, `render` (camera + scene), `main` (boot + loop + screens), `shots` (screenshot staging).
-- `main.ts` — copies `game/` + `screenshots/` to `/output` and writes `dossier.json`.
-- `shots.json` — the four screenshot poses and their query strings.
-
-## License
-
-MIT — see [LICENSE](LICENSE).
+The entry is judged on the game itself: the four screenshots above, a short source outline, and a live play session. The strongest moments are the systems working together — a police chase past the plaza fountain, the pistol ambush in the park, the timed delivery threading traffic on the central avenue.
