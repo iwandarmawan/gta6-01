@@ -1,112 +1,114 @@
-// Solmar Bay — three.js renderer: scene, sun, sky, fog and the cameras.
-// Two cameras in one: a low chase cam behind the car, and a closer
-// third-person cam on foot. Both smooth-follow the player and shake on
-// hard hits, so crashes feel like crashes.
+// Renderer, third-person camera rig and the day/night cycle:
+// one sun, one sky colour and one fog that all follow the clock.
 
-import { COLORS, WORLD } from './config.js';
+const THREE = window.THREE;
 
-const T = window.THREE;
+export function createRenderer(container) {
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setSize(container.clientWidth || window.innerWidth, container.clientHeight || window.innerHeight);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  container.appendChild(renderer.domElement);
 
-export class Renderer3D {
-  constructor(canvas) {
-    this.canvas = canvas;
-    this.renderer = new T.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = T.PCFSoftShadowMap;
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x87bfe8);
+  scene.fog = new THREE.Fog(0x87bfe8, 180, 700);
 
-    this.scene = new T.Scene();
-    this.scene.background = new T.Color(COLORS.sky);
-    this.scene.fog = new T.Fog(COLORS.fog, 120, 620);
+  const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 1200);
+  camera.position.set(0, 40, 80);
 
-    // Sun: a warm directional light with shadows over the whole city.
-    const sun = new T.DirectionalLight(COLORS.sun, 1.35);
-    sun.position.set(180, 260, 120);
-    sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
-    sun.shadow.camera.left = -320;
-    sun.shadow.camera.right = 320;
-    sun.shadow.camera.top = 320;
-    sun.shadow.camera.bottom = -320;
-    sun.shadow.camera.far = 800;
-    this.scene.add(sun);
-    // Hemisphere fill so the shadowed sides are never pitch black.
-    this.scene.add(new T.HemisphereLight(0xbfd8ff, 0x8a7a5a, 0.75));
+  const sun = new THREE.DirectionalLight(0xfff2d8, 2.4);
+  sun.position.set(120, 180, 60);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.camera.left = -280;
+  sun.shadow.camera.right = 280;
+  sun.shadow.camera.top = 280;
+  sun.shadow.camera.bottom = -280;
+  sun.shadow.camera.far = 700;
+  sun.shadow.bias = -0.0006;
+  scene.add(sun);
+  scene.add(sun.target);
 
-    this.camera = new T.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 1200);
-    this.camera.position.set(0, 30, 80);
+  const hemi = new THREE.HemisphereLight(0xbfd8ff, 0x8a7a5a, 0.9);
+  scene.add(hemi);
 
-    this.shakeAmount = 0;
-    this.camPos = new T.Vector3(0, 30, 80);
-    this.camLook = new T.Vector3(0, 0, 0);
-
-    window.addEventListener('resize', () => {
-      this.renderer.setSize(window.innerWidth, window.innerHeight);
-      this.camera.aspect = window.innerWidth / window.innerHeight;
-      this.camera.updateProjectionMatrix();
-    });
+  function resize() {
+    const w = container.clientWidth || window.innerWidth;
+    const h = container.clientHeight || window.innerHeight;
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+    renderer.setSize(w, h);
   }
+  window.addEventListener('resize', resize);
 
-  shake(amount) {
-    this.shakeAmount = Math.max(this.shakeAmount, amount);
-  }
+  return { renderer, scene, camera, sun, hemi, resize };
+}
 
-  // Follow the player: behind the car when driving, over the shoulder on
-  // foot. The camera lerps, so turns feel smooth instead of snappy.
-  follow(dt, player) {
-    const heading = player.heading;
-    const hx = Math.sin(heading);
-    const hz = Math.cos(heading);
-    let dist = 8.5;
-    let height = 3.4;
-    let lookAhead = 7;
-    let lookHeight = 1.6;
-    if (player.inCar && player.car) {
-      const speed = Math.abs(player.car.speed);
-      dist = 9.5 + speed * 0.22;
-      height = 4.2 + speed * 0.05;
-      lookAhead = 10;
+// timeOfDay is 0..1 (0 = midnight, 0.5 = noon). Returns the night
+// factor 0 (full day) .. 1 (full night) for lamps and windows.
+export function updateDayNight(env, timeOfDay) {
+  const { scene, sun, hemi } = env;
+  const angle = timeOfDay * Math.PI * 2 - Math.PI / 2; // noon = overhead
+  const elev = Math.sin(angle);
+  const azim = Math.cos(angle);
+  sun.position.set(azim * 260, Math.max(12, elev * 260), 120);
+  const day = Math.max(0, Math.min(1, elev * 1.6 + 0.25));
+  const night = 1 - day;
+  sun.intensity = 0.25 + day * 2.2;
+  sun.color.setHex(day > 0.6 ? 0xfff2d8 : 0xffb070);
+  hemi.intensity = 0.25 + day * 0.65;
+  const skyDay = new THREE.Color(0x87bfe8);
+  const skyDusk = new THREE.Color(0xe88a5a);
+  const skyNight = new THREE.Color(0x0a1428);
+  const sky = new THREE.Color();
+  if (elev > 0.25) sky.copy(skyDay);
+  else if (elev > -0.08) sky.copy(skyDay).lerp(skyDusk, 1 - (elev + 0.08) / 0.33);
+  else sky.copy(skyDusk).lerp(skyNight, Math.min(1, (-elev - 0.08) / 0.3));
+  scene.background = sky;
+  scene.fog.color.copy(sky);
+  return night;
+}
+
+// Third-person follow camera with mouse orbit and wheel zoom.
+export function createCameraRig(camera) {
+  const rig = {
+    yaw: Math.PI,
+    pitch: 0.42,
+    dist: 11,
+    pos: new THREE.Vector3(0, 30, 60),
+  };
+
+  // Follow a target position and heading. dt smooths the motion.
+  rig.update = function update(target, heading, dt, input, snap) {
+    rig.yaw -= (input ? input.mouseDX : 0) * 0.005;
+    rig.pitch += (input ? input.mouseDY : 0) * 0.004;
+    rig.pitch = Math.max(0.12, Math.min(1.1, rig.pitch));
+    if (input) rig.dist = Math.max(6, Math.min(18, rig.dist + input.wheel * 0.01));
+    const cx = target.x - Math.sin(rig.yaw) * Math.cos(rig.pitch) * rig.dist;
+    const cz = target.z - Math.cos(rig.yaw) * Math.cos(rig.pitch) * rig.dist;
+    const cy = target.y + 2 + Math.sin(rig.pitch) * rig.dist;
+    const want = new THREE.Vector3(cx, cy, cz);
+    if (snap) {
+      rig.pos.copy(want);
+    } else {
+      const k = 1 - Math.exp(-dt * 7);
+      rig.pos.lerp(want, k);
     }
-    const tx = player.x - hx * dist;
-    const tz = player.z - hz * dist;
-    const k = 1 - Math.pow(0.0001, dt); // frame-rate independent smoothing
-    this.camPos.x += (tx - this.camPos.x) * k;
-    this.camPos.y += (height - this.camPos.y) * k;
-    this.camPos.z += (tz - this.camPos.z) * k;
-    // Keep the camera out of buildings: lift it when it would clip a roof.
-    if (this.camPos.y < 2.2) this.camPos.y = 2.2;
-    const lx = player.x + hx * lookAhead;
-    const lz = player.z + hz * lookAhead;
-    this.camLook.x += (lx - this.camLook.x) * k;
-    this.camLook.y += (lookHeight - this.camLook.y) * k;
-    this.camLook.z += (lz - this.camLook.z) * k;
+    camera.position.copy(rig.pos);
+    camera.lookAt(target.x, target.y + 1.6, target.z);
+  };
 
-    let sx = 0;
-    let sy = 0;
-    if (this.shakeAmount > 0.01) {
-      sx = (Math.random() - 0.5) * this.shakeAmount;
-      sy = (Math.random() - 0.5) * this.shakeAmount;
-      this.shakeAmount *= Math.pow(0.02, dt);
-    }
-    this.camera.position.set(this.camPos.x + sx, this.camPos.y + sy, this.camPos.z);
-    this.camera.lookAt(this.camLook.x, this.camLook.y, this.camLook.z);
-  }
+  // Slow cinematic orbit for the start screen.
+  rig.orbit = function orbit(center, radius, angle, height) {
+    camera.position.set(
+      center.x + Math.sin(angle) * radius,
+      height,
+      center.z + Math.cos(angle) * radius,
+    );
+    camera.lookAt(center.x, 6, center.z);
+  };
 
-  // Snap the camera behind the player instantly (spawn, respawn, shots).
-  // Any leftover shake dies here: a fresh view never starts mid-tremor.
-  snap(player) {
-    this.shakeAmount = 0;
-    const hx = Math.sin(player.heading);
-    const hz = Math.cos(player.heading);
-    const dist = player.inCar ? 10 : 8.5;
-    this.camPos.set(player.x - hx * dist, player.inCar ? 4.2 : 3.4, player.z - hz * dist);
-    this.camLook.set(player.x + hx * 8, 1.6, player.z + hz * 8);
-    this.camera.position.copy(this.camPos);
-    this.camera.lookAt(this.camLook);
-  }
-
-  render() {
-    this.renderer.render(this.scene, this.camera);
-  }
+  return rig;
 }

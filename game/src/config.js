@@ -1,136 +1,147 @@
-// Solmar Bay — shared constants, tuning and small math helpers.
-// Original game, written for the make.fun gta6-01 bounty. Nothing here is
-// from any other game: all names, places and numbers are our own.
+// Solmar Bay — tuning, layout and content data for the whole game.
+// One place holds every number the other modules share, so the city,
+// the missions and the HUD always agree about where things are.
 
-// ---- World layout -------------------------------------------------------
-// A 10x10-block grid city. Roads run on a regular pitch; each block holds
-// procedural buildings, and the west edge is a beach with the sea beyond it.
+// World layout: a coastal island, x in [-260, 260], z in [-200, 200].
+// A water channel at x in [110, 150] splits Downtown (west) from
+// Portside (east); one bridge at z in [-14, 14] joins them.
 export const WORLD = {
-  PITCH: 54, // distance between neighbouring road centrelines (m)
-  BLOCK: 40, // building block side (m)
-  ROAD: 14, // road width (m)
-  GRID: 5, // roads at k * PITCH for k in -GRID..GRID
-  CITY_HALF: 270, // playable half-extent (m)
-  BEACH_X: -297, // sand strip starts here (west edge)
-  SEA_X: -340, // water plane starts here
-  CANAL_Z: 297, // canal along the south edge
-  SEED: 1337, // fixed seed: the same city every run
+  minX: -260, maxX: 260, minZ: -200, maxZ: 200,
+  landMinX: -240, landMaxX: 240, landMinZ: -180, landMaxZ: 180,
+  channelMinX: 110, channelMaxX: 150,
+  bridgeMinZ: -14, bridgeMaxZ: 14,
+  waterY: -0.7,
+  seed: 1337,
 };
 
-// ---- Palette ------------------------------------------------------------
-export const COLORS = {
-  sky: 0x87bfe8,
-  fog: 0x9fc8e8,
-  sun: 0xfff2d0,
-  asphalt: 0x33363c,
-  asphaltLine: 0xd8d8d8,
-  sidewalk: 0x9a938a,
-  sand: 0xe8d29a,
-  sea: 0x2f7fb8,
-  grass: 0x5da24a,
-  plaza: 0xb9a98c,
-  fountain: 0x4fa8d8,
-  building: [0xc9a06a, 0x8fa3b8, 0xb87a6a, 0x9a8fb0, 0x6a8a7a, 0xd8c9a8, 0x7a6a8a],
-  roof: [0x5a4a3a, 0x6a6a6a, 0x8a5a4a],
-  palmTrunk: 0x7a5a38,
-  palmLeaf: 0x3f8a3a,
-  lamp: 0x2a2a2a,
-  lampGlow: 0xffe9a8,
-  carPaint: [0xc23a2e, 0x2e6ac2, 0xe8c832, 0x3a3a3a, 0xe8e8e8, 0x2e8a4a, 0x8a2e6a, 0xc26a2e],
-  policePaint: 0x1a2a4a,
-  policeLightR: 0xff2a2a,
-  policeLightB: 0x2a4aff,
-  thug: 0x3a2a3a,
-  marker: 0xffc832,
-  pickup: 0x32d832,
+// Named places every system uses (missions, world art, minimap).
+export const PLACES = {
+  garage: { x: -50, z: -60, label: "Rico's Garage" },
+  hotel: { x: 70, z: -120, label: 'Solmar Grand Hotel' },
+  hotelFront: { x: 70, z: -105, label: 'Solmar Grand Hotel entrance' },
+  marina: { x: 225, z: 60, label: 'Marina Bay' },
+  dock: { x: 232, z: 72, label: 'Marina Dock' },
+  buoy: { x: 305, z: 150, label: 'Harbour Buoy' },
+  lighthouse: { x: -225, z: 165, label: 'South Point Light' },
+  beach: { x: -60, z: 168, label: 'Coral Beach' },
+  plaza: { x: 0, z: 0, label: 'Liberty Plaza' },
+  packages: [
+    { x: -135, z: -95, label: 'Package 1 — North Arcade' },
+    { x: 35, z: 125, label: 'Package 2 — Palm Court' },
+    { x: 185, z: -95, label: 'Package 3 — Portside Yard' },
+  ],
+  playerStart: { x: -50, z: -44, heading: Math.PI },
 };
 
-// ---- Tuning -------------------------------------------------------------
-export const TUNE = {
-  walkSpeed: 6,
-  runSpeed: 10.5,
-  jumpSpeed: 8.5,
-  gravity: 24,
-  carAccel: 14,
-  carBrake: 26,
-  carReverse: 8,
-  carMaxSpeed: 30, // ~108 km/h
-  carMaxReverse: 9,
-  carSteer: 1.9,
-  carDrag: 0.6,
-  trafficCount: 14,
-  pedCount: 22,
-  cashPickupCount: 8,
-  pickupValue: 50,
-  pickupRespawn: 60, // seconds until a collected cash pickup comes back
-  bustedFine: 100,
-  wastedFine: 150,
-  wantedDecayDelay: 12, // seconds with no crime before stars start to fall
-  wantedDecayStep: 8, // seconds per lost star while hidden
-  wantedSightRange: 42, // police "see" the player inside this range
-  pistolMag: 12,
-  pistolReserve: 48,
-  pistolReload: 1.2, // seconds
-  pistolRange: 70,
-  pistolDamage: 34,
-  punchDamage: 20,
-  punchRange: 2.2,
-  punchCooldown: 0.45,
-  thugHp: 68,
-  playerHp: 100,
-  missionTimeM3: 90, // Clockwork countdown, seconds
-};
+// Road centrelines. Traffic loops and the minimap are built from these.
+export const ROADS = [
+  // Downtown verticals
+  { x1: -200, z1: -150, x2: -200, z2: 150 },
+  { x1: -140, z1: -150, x2: -140, z2: 150 },
+  { x1: -80, z1: -150, x2: -80, z2: 150 },
+  { x1: -20, z1: -150, x2: -20, z2: 150 },
+  { x1: 40, z1: -150, x2: 40, z2: 150 },
+  { x1: 100, z1: -150, x2: 100, z2: 150 },
+  // Downtown horizontals
+  { x1: -200, z1: -150, x2: 100, z2: -150 },
+  { x1: -200, z1: -90, x2: 100, z2: -90 },
+  { x1: -200, z1: -30, x2: 100, z2: -30 },
+  { x1: -200, z1: 30, x2: 100, z2: 30 },
+  { x1: -200, z1: 90, x2: 100, z2: 90 },
+  { x1: -200, z1: 150, x2: 100, z2: 150 },
+  // Bridge road across the channel
+  { x1: 100, z1: 0, x2: 170, z2: 0 },
+  // Portside grid
+  { x1: 170, z1: -150, x2: 170, z2: 150 },
+  { x1: 210, z1: -150, x2: 210, z2: 150 },
+  { x1: 170, z1: -150, x2: 230, z2: -150 },
+  { x1: 170, z1: -90, x2: 230, z2: -90 },
+  { x1: 170, z1: 90, x2: 230, z2: 90 },
+  { x1: 170, z1: 150, x2: 230, z2: 150 },
+  // Coastal avenue along the south shore to the marina
+  { x1: -200, z1: 165, x2: 230, z2: 165 },
+];
 
-// ---- Missions -----------------------------------------------------------
-// Rico Vega runs jobs for fixer Delgado across Solmar Bay. Missions 1-4 are
-// playable; M5 unlocks only once the first four are done.
+// Rectangular loops traffic cars drive, as waypoint lists.
+export const TRAFFIC_LOOPS = [
+  [[-200, -150], [100, -150], [100, 150], [-200, 150]],
+  [[-140, -90], [-20, -90], [-20, 90], [-140, 90]],
+  [[-80, -30], [40, -30], [40, 30], [-80, 30]],
+  [[170, -150], [210, -150], [210, 150], [170, 150]],
+  [[100, 0], [170, 0], [170, 165], [-200, 165], [-200, 150], [100, 150]],
+];
+
+// Mission definitions in story order.
 export const MISSIONS = [
   {
-    id: 1, name: 'First Wheels', reward: 250,
-    briefing: 'Delgado: "Rico, welcome back. Steal a car and bring it to the plaza marker. Keep it clean."',
-    objective: 'Steal a car, then drive to the plaza marker',
+    id: 'harbour-hustle',
+    name: 'Harbour Hustle',
+    briefing: 'A client waits at Marina Bay. Pick them up, then drop them at the Solmar Grand Hotel before the clock runs out.',
+    reward: 150,
+    timeLimit: 150,
+    steps: [
+      { kind: 'goto', label: 'Drive to the client at Marina Bay', target: 'marina' },
+      { kind: 'goto', label: 'Drop the client at the Solmar Grand Hotel', target: 'hotelFront' },
+    ],
   },
   {
-    id: 2, name: 'The Getaway', reward: 300,
-    briefing: 'Delgado: "Package is waiting at the docks. Grab it, then lose the heat and reach the safehouse."',
-    objective: 'Pick up the package at the docks, then reach the safehouse',
+    id: 'package-run',
+    name: 'Package Run',
+    briefing: 'Three parcels are stashed around the city. Collect them all and bring them to Rico\'s Garage. The law will not like it — each pickup draws heat.',
+    reward: 250,
+    timeLimit: 240,
+    steps: [
+      { kind: 'collect', label: 'Collect the package at North Arcade', target: 'packages.0' },
+      { kind: 'collect', label: 'Collect the package at Palm Court', target: 'packages.1' },
+      { kind: 'collect', label: 'Collect the package at Portside Yard', target: 'packages.2' },
+      { kind: 'goto', label: 'Deliver the parcels to Rico\'s Garage', target: 'garage' },
+    ],
   },
   {
-    id: 3, name: 'Clockwork', reward: 400,
-    briefing: 'Delgado: "Ninety seconds. A parcel, across town, no excuses. The clock is already running."',
-    objective: 'Deliver across the city — 90 seconds!',
-  },
-  {
-    id: 4, name: 'The Informant', reward: 500,
-    briefing: 'Delgado: "Meet the informant in the park, on foot. It is a setup — bring the pistol."',
-    objective: 'Meet the informant in the park, survive the ambush',
-  },
-  {
-    id: 5, name: 'The Big One', reward: 1200,
-    briefing: 'Delgado: "One last job, Rico. The vault, the bridge, the whole bay watching. Finish the first four first."',
-    objective: 'Locked — finish missions 1–4 to unlock',
+    id: 'harbour-escape',
+    name: 'Harbour Escape',
+    briefing: 'Take the boat from Marina Dock, sail out to the harbour buoy, then bring her back to the dock. Watch the hull — and the law.',
+    reward: 400,
+    timeLimit: 260,
+    steps: [
+      { kind: 'board', label: 'Board the boat at Marina Dock', target: 'dock' },
+      { kind: 'goto', label: 'Sail to the harbour buoy', target: 'buoy', vehicle: 'boat' },
+      { kind: 'goto', label: 'Bring the boat back to Marina Dock', target: 'dock', vehicle: 'boat' },
+    ],
   },
 ];
 
-// ---- Key places in the city (world coordinates) --------------------------
-export const PLACES = {
-  plaza: { x: 0, z: 0 }, // mission 1 marker, city centre
-  docks: { x: -270, z: 162 }, // mission 2 pickup, west beach road
-  safehouse: { x: 270, z: -162 }, // mission 2 + 4 escape point, east edge
-  delivery: { x: 216, z: 216 }, // mission 3 drop-off, south-east corner
-  park: { x: 135, z: -81 }, // mission 4 meeting point, park block
-  spawn: { x: 0, z: 162 }, // player start, central avenue
+// Movement, combat, police and economy tuning.
+export const TUNING = {
+  walkSpeed: 6, runSpeed: 10.5, playerRadius: 0.7,
+  carAccel: 14, carBrake: 26, carMaxSpeed: 34, carMaxReverse: 10,
+  carTurn: 1.9, carGrip: 6.5, carRadius: 1.9, carHealth: 100,
+  boatAccel: 8, boatMaxSpeed: 20, boatTurn: 1.1, boatRadius: 2.4,
+  trafficSpeed: 10, trafficCount: 10, pedCount: 14,
+  playerHealth: 100, repairCost: 50,
+  heatPerPunch: 25, heatPerPackage: 20, heatPerRam: 20, heatDecay: 2.2,
+  policeBustTime: 2.5, policeBustRange: 4.5,
+  dayLength: 300,
 };
 
-// ---- Math helpers --------------------------------------------------------
-export function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
-export function lerp(a, b, t) { return a + (b - a) * t; }
-export function dist2(ax, az, bx, bz) { const dx = ax - bx; const dz = az - bz; return Math.hypot(dx, dz); }
-// Smallest signed angle difference, in radians.
-export function angleDiff(a, b) {
-  let d = (b - a) % (Math.PI * 2);
-  if (d > Math.PI) d -= Math.PI * 2;
-  if (d < -Math.PI) d += Math.PI * 2;
-  return d;
-}
-export function angleLerp(a, b, t) { return a + angleDiff(a, b) * clamp(t, 0, 1); }
+// Key bindings (KeyboardEvent.code values).
+export const KEYS = {
+  up: ['KeyW', 'ArrowUp'], down: ['KeyS', 'ArrowDown'],
+  left: ['KeyA', 'ArrowLeft'], right: ['KeyD', 'ArrowRight'],
+  run: ['ShiftLeft', 'ShiftRight'], brake: ['Space'],
+  enter: ['KeyE'], punch: ['KeyF'], pause: ['KeyP', 'Escape'],
+  mute: ['KeyM'], retry: ['KeyR'],
+};
+
+// Palettes: sun-soaked coastal city.
+export const PALETTE = {
+  building: [0xf5efe0, 0xe8dcc0, 0xd9a066, 0x9fc3d8, 0xa8c686, 0xd8d8d8, 0xf2b8a0, 0x8fb8a8],
+  roof: [0x8a7a66, 0x6b7c8c, 0xb0563a],
+  road: 0x3a3f46, sidewalk: 0x9a938a, sand: 0xe8d49a,
+  grass: 0x7fae62, sea: 0x2e7fa8, skyDay: 0x87bfe8,
+  car: [0xc23b2e, 0x2e5fa8, 0xe8c832, 0x3aa655, 0xeeeeee, 0x222222, 0x7a4a9e],
+  police: 0xe8e8e8,
+};
+
+// Save key for localStorage.
+export const SAVE_KEY = 'solmar-bay-save-v1';

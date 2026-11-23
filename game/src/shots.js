@@ -1,97 +1,88 @@
-// Solmar Bay — screenshot scenes behind ?shot=start|play|chase|mission.
-// Each scene stages a real game state (real mission, real wanted level,
-// real cars and police) and freezes it, so the frame is what the game
-// actually looks like and the same seed always gives the same frame.
+// Screenshot mode: the ?shot= query the shots.json list uses.
+// Each shot sets up one composed scene (start screen, driving,
+// a police chase, a mission in progress) so the screenshots the
+// entry ships are real renders of the game itself.
 
 import { PLACES } from './config.js';
+import { makeCar } from './cars.js';
 
-// Put the player in a car at (x, z) facing `heading`, engine running.
-function stageInCar(game, x, z, heading, speed = 0) {
-  const car = game.parked[0];
-  car.x = x;
-  car.z = z;
-  car.heading = heading;
-  car.speed = speed;
-  car.group.position.set(x, 0, z);
-  car.group.rotation.y = heading;
-  game.player.inCar = true;
-  game.player.car = car;
-  game.player.x = x;
-  game.player.z = z;
-  game.player.heading = heading;
-  game.playerMesh.visible = false;
-  game.renderer.snap(game.player);
-}
+export function applyShot(game) {
+  const params = new URLSearchParams(window.location.search);
+  const shot = params.get('shot');
+  if (!shot) return null;
+  const seed = Number(params.get('seed') || 1);
+  void seed;
 
-export function stageShot(game, name) {
-  game.state = 'playing';
-  game.hud.hideTitle();
-  game.audio.setMuted(true); // screenshots never need sound
-  // Each scene shows a different time of day on the HUD clock.
-  const sceneTimes = { start: 120, play: 480, chase: 900, mission: 360 };
-  game.time = sceneTimes[name] ?? 120;
+  // Bright midday light for every shot: the city reads best in sun.
+  game.timeOfDay = 0.58;
+  game.timeFrozen = true;
+  game.snapCamera = true;
 
-  if (name === 'play') {
-    // On foot in the plaza, pistol out, one star, two peds fleeing, M4 live.
-    game.debugTeleport(PLACES.plaza.x - 6, PLACES.plaza.z + 10, Math.PI * 0.9);
-    game.combat.setWeapon('pistol');
-    game.combat.mag = 9;
-    game.combat.reserve = 48;
-    game.debugSetWanted(1);
-    game.debugStartMission(4);
-    game.peds.scare(game.player.x, game.player.z, 18);
-    // Two peds right in front of the player (forward is mostly -z here),
-    // mid-flee from the gunfire.
-    const p1 = game.peds.peds[0];
-    const p2 = game.peds.peds[1];
-    p1.x = game.player.x + 4; p1.z = game.player.z - 8; p1.fleeing = 3;
-    p2.x = game.player.x - 5; p2.z = game.player.z - 10; p2.fleeing = 3;
-    game.peds.update(0.1);
-    game.renderer.snap(game.player);
-    game.hud.update(0.1);
-    return;
+  if (shot === 'start') {
+    // Menu state with the orbiting camera: nothing else to do.
+    return 'start';
   }
 
-  if (name === 'chase') {
-    // Police chase: 3 stars, two police cars right behind, M2 live.
-    stageInCar(game, 0, 120, Math.PI, 22);
-    game.debugSetWanted(3);
-    game.debugStartMission(2);
-    game.missions.stage = 1;
-    game.missions.setMarkerFor(2, 1);
-    game.police.update(0.5);
-    // Pull two police cars in close for the shot, flanking ahead of the
-    // player where the chase camera can see them (cops right behind the
-    // player fall behind the camera and vanish from the frame).
-    const cops = game.police.cars;
-    if (cops[0]) {
-      cops[0].x = game.player.x - 6; cops[0].z = game.player.z - 14;
-      cops[0].heading = game.player.heading;
-      cops[0].group.position.set(cops[0].x, 0, cops[0].z);
+  game.hideStartScreen();
+  game.mode = 'playing';
+
+  if (shot === 'play') {
+    const car = game.playerCar;
+    car.pos.set(-100, 0, 30);
+    car.heading = Math.PI / 2;
+    car.speed = 16;
+    game.shotDrive = true;
+    game.enterCar(car);
+    game.rig.yaw = Math.PI / 2;
+    game.rig.dist = 11;
+    return 'play';
+  }
+
+  if (shot === 'chase') {
+    const car = game.playerCar;
+    car.pos.set(0, 0, 30);
+    car.heading = Math.PI / 2;
+    car.speed = 20;
+    game.shotDrive = true;
+    game.enterCar(car);
+    game.rig.yaw = Math.PI / 2;
+    game.rig.dist = 12;
+    // Three stars, and three cruisers staged where the camera sees them.
+    game.police.heat = 60;
+    game.police.stars = 3;
+    const spots = [
+      { x: 55, z: 30, heading: -Math.PI / 2 },
+      { x: 72, z: 37, heading: -Math.PI / 2 },
+      { x: -35, z: 30, heading: Math.PI / 2 },
+    ];
+    for (const s of spots) {
+      const cruiser = makeCar(game.env.scene, s.x, s.z, s.heading, 0xe8e8e8, true);
+      game.police.cars.push({ car: cruiser, ramCooldown: 0, sirenPhase: 0 });
     }
-    if (cops[1]) {
-      cops[1].x = game.player.x + 7; cops[1].z = game.player.z - 18;
-      cops[1].heading = game.player.heading;
-      cops[1].group.position.set(cops[1].x, 0, cops[1].z);
-    }
-    game.renderer.snap(game.player);
-    game.hud.update(0.1);
-    return;
+    game.hud.toast('WANTED — 3 stars', 3);
+    return 'chase';
   }
 
-  if (name === 'mission') {
-    // M3 Clockwork mid-delivery: countdown at 1:12, car mid-turn, 79 km/h.
-    stageInCar(game, 108, 108, Math.PI * 0.75, 22);
-    game.debugStartMission(3);
-    game.missions.timer = 72; // 1:12 on the clock
-    game.renderer.snap(game.player);
-    game.hud.update(0.1);
-    return;
+  if (shot === 'mission') {
+    game.missions.index = 1;
+    game.missions.startNext();
+    game.player.pos.set(-152, 0, -78);
+    game.player.heading = Math.atan2(
+      PLACES.packages[0].x - game.player.pos.x,
+      PLACES.packages[0].z - game.player.pos.z,
+    );
+    game.player.group.position.copy(game.player.pos);
+    game.player.group.rotation.y = game.player.heading;
+    game.rig.yaw = game.player.heading;
+    game.police.addHeat(20);
+    return 'mission';
   }
 
-  // Default (start): the cover — red sedan on the central avenue, M1 live.
-  stageInCar(game, 0, 162, Math.PI, 0);
-  game.debugStartMission(1);
-  game.renderer.snap(game.player);
-  game.hud.update(0.1);
+  if (shot === 'end') {
+    game.mode = 'over';
+    game.hud.showGameOver('wasted', () => {}, () => {});
+    return 'end';
+  }
+
+  return shot;
 }

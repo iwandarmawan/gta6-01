@@ -1,214 +1,172 @@
-// Solmar Bay — cars: mesh building, arcade driving, damage and smoke.
-// A car is a small group of boxes (body, cabin, wheels, lights) with a
-// simple physics state: position, heading, speed and damage 0..1. Damage
-// bends the handling and, past a threshold, makes the car smoke.
+// Vehicles: the car mesh factory, arcade driving physics shared by
+// the player, traffic and police, and the marina boat — the new
+// system this entry adds: a drivable boat on the harbour.
 
-import { COLORS, TUNE, WORLD, clamp } from './config.js';
+import { TUNING, PALETTE } from './config.js';
 
-const T = window.THREE;
+const THREE = window.THREE;
 
-let carCounter = 0;
-
-// Build one car mesh. `police` cars get the dark paint, a light bar and a
-// roof number; ordinary cars get a random paint colour and body shape.
-export function makeCarMesh(rng, police = false) {
-  const group = new T.Group();
-  const paint = police ? COLORS.policePaint : rng.pick(COLORS.carPaint);
-  const sedan = !police && rng.chance(0.5);
-  const bodyLen = sedan ? 4.4 : 3.8;
-  const bodyW = 1.9;
-  const bodyH = 0.75;
-
-  const body = new T.Mesh(
-    new T.BoxGeometry(bodyW, bodyH, bodyLen),
-    new T.MeshLambertMaterial({ color: paint }),
-  );
-  body.position.y = 0.55;
+// Build a low-poly car from boxes. Returns { group, wheels, frontWheels }.
+export function makeCarMesh(color, isPolice) {
+  const group = new THREE.Group();
+  const bodyMat = new THREE.MeshLambertMaterial({ color: isPolice ? PALETTE.police : color });
+  const glassMat = new THREE.MeshLambertMaterial({ color: 0x1c2836 });
+  const body = new THREE.Mesh(new THREE.BoxGeometry(4.4, 0.85, 2), bodyMat);
+  body.position.y = 0.75;
   body.castShadow = true;
   group.add(body);
-
-  const cabin = new T.Mesh(
-    new T.BoxGeometry(bodyW * 0.82, 0.62, bodyLen * 0.45),
-    new T.MeshLambertMaterial({ color: police ? 0x101418 : 0x1c2733 }),
-  );
-  cabin.position.set(0, 1.2, sedan ? -0.2 : 0.1);
+  const cabin = new THREE.Mesh(new THREE.BoxGeometry(2.3, 0.7, 1.7), glassMat);
+  cabin.position.set(-0.2, 1.5, 0);
   cabin.castShadow = true;
   group.add(cabin);
-
-  // Wheels: dark cylinders, spun by the drive code for a rolling look.
-  const wheelGeo = new T.CylinderGeometry(0.36, 0.36, 0.28, 10);
-  const wheelMat = new T.MeshLambertMaterial({ color: 0x141414 });
+  const wheelGeo = new THREE.CylinderGeometry(0.42, 0.42, 0.35, 10);
+  const wheelMat = new THREE.MeshLambertMaterial({ color: 0x161616 });
   const wheels = [];
-  for (const [wx, wz] of [[-0.85, 1.35], [0.85, 1.35], [-0.85, -1.35], [0.85, -1.35]]) {
-    const wheel = new T.Mesh(wheelGeo, wheelMat);
-    wheel.rotation.z = Math.PI / 2;
-    wheel.position.set(wx, 0.36, wz);
+  const frontWheels = [];
+  for (const [wx, wz] of [[1.5, 0.95], [1.5, -0.95], [-1.5, 0.95], [-1.5, -0.95]]) {
+    const wheel = new THREE.Mesh(wheelGeo, wheelMat);
+    wheel.rotation.x = Math.PI / 2;
+    wheel.position.set(wx, 0.42, wz);
+    wheel.castShadow = true;
     group.add(wheel);
     wheels.push(wheel);
+    if (wx > 0) frontWheels.push(wheel);
   }
-
-  // Headlights (front) and tail lights (rear): small emissive boxes.
-  const headMat = new T.MeshBasicMaterial({ color: 0xfff6c8 });
-  for (const s of [-1, 1]) {
-    const h = new T.Mesh(new T.BoxGeometry(0.34, 0.18, 0.08), headMat);
-    h.position.set(s * 0.6, 0.62, bodyLen / 2 + 0.02);
-    group.add(h);
+  const headMat = new THREE.MeshLambertMaterial({ color: 0xfff6c0, emissive: 0xffe9a0 });
+  headMat.emissiveIntensity = 0.5;
+  for (const wz of [0.6, -0.6]) {
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.25, 0.4), headMat);
+    head.position.set(2.22, 0.85, wz);
+    group.add(head);
   }
-  const tailMat = new T.MeshBasicMaterial({ color: 0xd82a2a });
-  for (const s of [-1, 1]) {
-    const t = new T.Mesh(new T.BoxGeometry(0.34, 0.16, 0.08), tailMat);
-    t.position.set(s * 0.6, 0.62, -bodyLen / 2 - 0.02);
-    group.add(t);
+  const tailMat = new THREE.MeshLambertMaterial({ color: 0xc02020, emissive: 0x881111 });
+  tailMat.emissiveIntensity = 0.5;
+  for (const wz of [0.6, -0.6]) {
+    const tail = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.25, 0.4), tailMat);
+    tail.position.set(-2.22, 0.85, wz);
+    group.add(tail);
   }
-  let lightBar = null;
-  let lightR = null;
-  let lightB = null;
-  if (police) {
-    lightBar = new T.Mesh(
-      new T.BoxGeometry(1.1, 0.22, 0.4),
-      new T.MeshLambertMaterial({ color: 0x222222 }),
-    );
-    lightBar.position.set(0, 1.62, -0.1);
-    group.add(lightBar);
-    lightR = new T.Mesh(
-      new T.BoxGeometry(0.5, 0.16, 0.42),
-      new T.MeshBasicMaterial({ color: COLORS.policeLightR }),
-    );
-    lightR.position.set(-0.28, 1.78, -0.1);
-    group.add(lightR);
-    lightB = new T.Mesh(
-      new T.BoxGeometry(0.5, 0.16, 0.42),
-      new T.MeshBasicMaterial({ color: COLORS.policeLightB }),
-    );
-    lightB.position.set(0.28, 1.78, -0.1);
-    group.add(lightB);
+  if (isPolice) {
+    const redMat = new THREE.MeshLambertMaterial({ color: 0xff2222, emissive: 0xff2222 });
+    const blueMat = new THREE.MeshLambertMaterial({ color: 0x2244ff, emissive: 0x2244ff });
+    const red = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.22, 0.5), redMat);
+    red.position.set(-0.2, 1.95, 0.45);
+    group.add(red);
+    const blue = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.22, 0.5), blueMat);
+    blue.position.set(-0.2, 1.95, -0.45);
+    group.add(blue);
+    group.userData.lightBar = { redMat, blueMat };
   }
-
-  // Smoke puffs for damaged cars: a few grey sprites the drive code puffs.
-  const smokeMat = new T.MeshBasicMaterial({ color: 0x777777, transparent: true, opacity: 0.55 });
-  const smoke = [];
-  for (let i = 0; i < 5; i += 1) {
-    const puff = new T.Mesh(new T.SphereGeometry(0.4, 6, 5), smokeMat.clone());
-    puff.visible = false;
-    group.add(puff);
-    smoke.push(puff);
-  }
-
-  return { group, wheels, lightR, lightB, smoke, bodyLen, tailMat };
+  group.userData.wheels = wheels;
+  group.userData.frontWheels = frontWheels;
+  return group;
 }
 
-export class Car {
-  constructor(scene, rng, x, z, heading, police = false) {
-    this.id = carCounter;
-    carCounter += 1;
-    this.police = police;
-    this.mesh = makeCarMesh(rng, police);
-    this.group = this.mesh.group;
-    this.group.position.set(x, 0, z);
-    this.group.rotation.y = heading;
-    scene.add(this.group);
-    this.x = x;
-    this.z = z;
-    this.heading = heading;
-    this.speed = 0;
-    this.damage = 0;
-    this.steer = 0;
-    this.dead = false;
-    this.smokeTimer = 0;
-    this.flashTimer = 0; // police light-bar blink clock
-  }
+// A drivable car: position, heading, speed and health.
+export function makeCar(scene, x, z, heading, color, isPolice) {
+  const group = makeCarMesh(color, isPolice);
+  group.position.set(x, 0, z);
+  group.rotation.y = heading;
+  scene.add(group);
+  return {
+    group, isPolice: !!isPolice,
+    pos: group.position,
+    heading, speed: 0, steer: 0,
+    health: TUNING.carHealth, maxHealth: TUNING.carHealth,
+    wheels: group.userData.wheels,
+    frontWheels: group.userData.frontWheels,
+  };
+}
 
-  get speedKmh() { return Math.abs(this.speed) * 3.6; }
-  get forwardX() { return Math.sin(this.heading); }
-  get forwardZ() { return Math.cos(this.heading); }
-
-  // Arcade drive step: throttle in [-1, 1], steer in [-1, 1].
-  drive(dt, throttle, steer, colliders) {
-    const maxFwd = TUNE.carMaxSpeed * (1 - this.damage * 0.45);
-    const maxRev = TUNE.carMaxReverse;
-    if (throttle > 0) this.speed += TUNE.carAccel * throttle * dt;
-    else if (throttle < 0) this.speed += (this.speed > 0.5 ? -TUNE.carBrake : TUNE.carReverse) * dt;
-    else {
-      // Coast down with drag.
-      this.speed -= this.speed * TUNE.carDrag * dt;
-      if (Math.abs(this.speed) < 0.05) this.speed = 0;
-    }
-    this.speed = clamp(this.speed, -maxRev, maxFwd);
-    this.steer = steer;
-    const turn = steer * TUNE.carSteer * dt * clamp(this.speed / 8, -1, 1);
-    this.heading += turn;
-    let nx = this.x + Math.sin(this.heading) * this.speed * dt;
-    let nz = this.z + Math.cos(this.heading) * this.speed * dt;
-    // Stay inside the playable area (the sea and the canal stop cars).
-    nx = clamp(nx, WORLD.BEACH_X + 6, WORLD.CITY_HALF);
-    nz = clamp(nz, -WORLD.CITY_HALF, WORLD.CANAL_Z + 2);
-    // Buildings: slide along them, take a little damage on a hard hit.
-    let hit = false;
-    for (let i = 0; i < colliders.length; i += 1) {
-      const c = colliders[i];
-      const cx = Math.max(c.minX, Math.min(nx, c.maxX));
-      const cz = Math.max(c.minZ, Math.min(nz, c.maxZ));
-      const dx = nx - cx;
-      const dz = nz - cz;
-      if (dx * dx + dz * dz < 1.3 * 1.3) {
-        hit = true;
-        const d = Math.hypot(dx, dz) || 1;
-        nx = cx + (dx / d) * 1.3;
-        nz = cz + (dz / d) * 1.3;
-        if (Math.abs(this.speed) > 9) this.addDamage(0.08);
-        this.speed *= 0.45;
-      }
-    }
-    this.x = nx;
-    this.z = nz;
-    this.group.position.set(this.x, 0, this.z);
-    this.group.rotation.y = this.heading;
-    // Rolling wheels, brake lights (bright while braking) and smoke.
-    const spin = (this.speed * dt) / 0.36;
-    for (const w of this.mesh.wheels) w.rotation.x += spin;
-    if (this.mesh.tailMat) {
-      this.mesh.tailMat.color.setHex(throttle < 0 ? 0xff5a4a : 0xd82a2a);
-    }
-    this.updateSmoke(dt);
-    this.updateLights(dt);
-    return hit;
+// Arcade driving step. throttle -1..1, steer -1..1. Returns the
+// impact speed when the car hit something hard this frame.
+export function driveCar(car, dt, throttle, steer, handbrake, city) {
+  const prev = { x: car.pos.x, z: car.pos.z };
+  const speedBefore = car.speed;
+  if (throttle > 0) car.speed += TUNING.carAccel * throttle * dt;
+  else if (throttle < 0) {
+    car.speed += (car.speed > 0.5 ? -TUNING.carBrake : TUNING.carAccel * 0.7) * dt;
   }
-
-  addDamage(amount) {
-    this.damage = clamp(this.damage + amount, 0, 1);
+  if (handbrake) car.speed -= car.speed * 3.2 * dt;
+  car.speed -= car.speed * 0.55 * dt; // drag
+  if (car.speed > TUNING.carMaxSpeed) car.speed = TUNING.carMaxSpeed;
+  if (car.speed < -TUNING.carMaxReverse) car.speed = -TUNING.carMaxReverse;
+  if (Math.abs(car.speed) < 0.05 && throttle === 0) car.speed = 0;
+  const steerAmount = steer * TUNING.carTurn * Math.min(1, Math.abs(car.speed) / 12);
+  car.heading += steerAmount * Math.sign(car.speed) * dt * (handbrake ? 1.5 : 1);
+  car.pos.x += Math.sin(car.heading) * car.speed * dt;
+  car.pos.z += Math.cos(car.heading) * car.speed * dt;
+  const hit = city.resolveCircle(car.pos, TUNING.carRadius, prev);
+  let impact = 0;
+  if (hit) {
+    impact = Math.abs(speedBefore);
+    car.speed *= -0.25;
+    car.health -= Math.max(0, (impact - 9) * 1.6);
   }
+  car.group.rotation.y = car.heading;
+  for (const w of car.wheels) w.rotation.y += car.speed * dt * 1.4;
+  for (const w of car.frontWheels) w.rotation.z = -steer * 0.35;
+  return { hit, impact };
+}
 
-  // Damaged cars puff grey smoke from the bonnet, faster as damage grows.
-  updateSmoke(dt) {
-    this.smokeTimer -= dt;
-    const smoking = this.damage > 0.25;
-    for (const puff of this.mesh.smoke) {
-      if (!smoking) { puff.visible = false; continue; }
-      if (this.smokeTimer <= 0) {
-        this.smokeTimer = 0.35 - this.damage * 0.2;
-        puff.visible = true;
-        puff.position.set((Math.random() - 0.5) * 0.8, 1.1, 1.6);
-        puff.scale.setScalar(0.6 + Math.random() * 0.5);
-      }
-      if (puff.visible) {
-        puff.position.y += dt * 1.4;
-        puff.scale.multiplyScalar(1 + dt * 0.8);
-        if (puff.position.y > 3.2) puff.visible = false;
-      }
-    }
-  }
+// The marina boat: a small motorboat the player can sail.
+export function makeBoat(scene, x, z) {
+  const group = new THREE.Group();
+  const hullMat = new THREE.MeshLambertMaterial({ color: 0xf0f0f0 });
+  const hull = new THREE.Mesh(new THREE.BoxGeometry(5.2, 0.9, 2.4), hullMat);
+  hull.position.y = 0.3;
+  hull.castShadow = true;
+  group.add(hull);
+  const bow = new THREE.Mesh(new THREE.ConeGeometry(1.2, 1.8, 4), hullMat);
+  bow.rotation.z = -Math.PI / 2;
+  bow.rotation.y = Math.PI / 4;
+  bow.position.set(3.4, 0.3, 0);
+  bow.scale.set(1, 1, 1.9);
+  bow.castShadow = true;
+  group.add(bow);
+  const cabin = new THREE.Mesh(
+    new THREE.BoxGeometry(1.8, 0.9, 1.6),
+    new THREE.MeshLambertMaterial({ color: 0x2e5fa8 }),
+  );
+  cabin.position.set(-0.4, 1.1, 0);
+  cabin.castShadow = true;
+  group.add(cabin);
+  const stripeMat = new THREE.MeshLambertMaterial({ color: 0xc23b2e });
+  const stripe = new THREE.Mesh(new THREE.BoxGeometry(5.24, 0.22, 2.44), stripeMat);
+  stripe.position.y = 0.62;
+  group.add(stripe);
+  group.position.set(x, 0, z);
+  scene.add(group);
+  return {
+    group,
+    pos: group.position,
+    heading: Math.PI / 2,
+    speed: 0,
+    health: 100,
+    maxHealth: 100,
+    bobT: 0,
+  };
+}
 
-  // Police light bar alternates red / blue twice a second.
-  updateLights(dt) {
-    if (!this.police || !this.mesh.lightR) return;
-    this.flashTimer += dt;
-    const on = Math.floor(this.flashTimer * 2) % 2 === 0;
-    this.mesh.lightR.material.color.setHex(on ? COLORS.policeLightR : 0x330000);
-    this.mesh.lightB.material.color.setHex(on ? 0x000033 : COLORS.policeLightB);
+// Boat step: throttle -1..1, steer -1..1. Returns true on a hard hit.
+export function driveBoat(boat, dt, throttle, steer, city) {
+  const prev = { x: boat.pos.x, z: boat.pos.z };
+  const speedBefore = boat.speed;
+  boat.speed += TUNING.boatAccel * throttle * dt;
+  boat.speed -= boat.speed * 0.4 * dt;
+  if (boat.speed > TUNING.boatMaxSpeed) boat.speed = TUNING.boatMaxSpeed;
+  if (boat.speed < -4) boat.speed = -4;
+  boat.heading += steer * TUNING.boatTurn * Math.min(1, Math.abs(boat.speed) / 8) * Math.sign(boat.speed || 1) * dt;
+  boat.pos.x += Math.sin(boat.heading) * boat.speed * dt;
+  boat.pos.z += Math.cos(boat.heading) * boat.speed * dt;
+  const hit = city.resolveBoat(boat.pos, TUNING.boatRadius, prev);
+  if (hit) {
+    boat.speed *= -0.2;
+    boat.health -= Math.max(0, (Math.abs(speedBefore) - 6) * 2);
   }
-
-  remove(scene) {
-    scene.remove(this.group);
-    this.dead = true;
-  }
+  boat.bobT += dt;
+  boat.group.rotation.y = boat.heading;
+  boat.group.position.y = Math.sin(boat.bobT * 1.6) * 0.12;
+  boat.group.rotation.z = Math.sin(boat.bobT * 1.1) * 0.03;
+  return hit;
 }
