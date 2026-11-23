@@ -1,41 +1,56 @@
-# Solmar Bay — an open-world crime game for make.fun
+# Solmar Bay
 
-[![make.fun · gta6-01](https://make.fun/badge/gta6-01.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
-[![rank](https://make.fun/badge/gta6-01/iwandarmawan/gta6-01/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
-[![reward](https://make.fun/badge/gta6-01/iwandarmawan/gta6-01/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
+[![make.fun](https://make.fun/badge/gta6-01.svg)](https://make.fun/bounty/gta6-01)
+[![rank](https://make.fun/badge/gta6-01/iwandarmawan/gta6-01/rank.svg)](https://make.fun/bounty/gta6-01)
+[![reward](https://make.fun/badge/gta6-01/iwandarmawan/gta6-01/reward.svg)](https://make.fun/bounty/gta6-01)
 
-An entry for [make.fun gta6-01](https://make.fun/bounty/gta6-01): build the most complete open-world crime game you can, in the spirit of GTA 6 — an original city, original characters, original story. Nothing here is from Rockstar's games: no names, map, art or music of theirs.
+An original open-world crime game: a sun-soaked coastal city you explore
+on foot and by car, with traffic, pedestrians, a wanted level and police
+who chase you, three story missions, a boat to sail, and a day/night
+cycle. Every name, place and sound in it is invented for this game.
 
-## The game
+## The city
 
-Rico Vega is back in Solmar Bay, a sun-soaked coastal city, running jobs for fixer Delgado. Steal cars, lose the heat, deliver on the clock, survive an ambush — and build up enough cash for the Big One.
+Solmar Bay is a coastal island with two districts — Downtown and
+Portside — joined by a bridge over a harbour channel, plus a beach,
+a marina, a lighthouse and a plaza. Drive the avenues, steal a parked
+car, run jobs for Rico at his garage, and watch the wanted stars climb
+when the law notices.
 
-- A deterministic 10×10-block coastal city: grid streets, procedural buildings, palms, street lights, a beach with a pier-side road, a central plaza with a fountain, a park, and a bridge over the south canal — built from one seed, so every run looks the same.
-- Arcade driving and car stealing: steal any parked or traffic car, chase camera, building collisions, car damage and smoke.
-- On-foot play: walk, run, jump, enter and exit cars, fists and a pistol (hitscan, muzzle flash, 12-round mag, reload).
-- Traffic AI that follows the lanes and stops at junctions, and pedestrians who stroll the sidewalks and flee from gunfire.
-- Wanted 0–5 stars with police cars that chase and ram, officers on foot, roadblocks at 3 stars, and a wanted level that decays when you stay hidden and quiet. Busted and wasted both cost cash.
-- Five story jobs: First Wheels ($250), The Getaway ($300), Clockwork — a 90-second timed delivery ($400), The Informant — an on-foot tail that turns into a pistol ambush ($500), and The Big One ($1,200), locked until the first four are done. Cash pickups ($50) are scattered around the sidewalks.
-- HUD with cash, health, wanted stars, speed, ammo, mission objective, a live in-game clock and a mission countdown, plus a live canvas minimap (roads, player arrow, mission blip, police dots).
-- Synthesised WebAudio sound (engine hum, sirens, gunshots, pickup blips, mission stings — no audio files), localStorage save, pause menu with the job list.
+## Missions (in order, from Rico's Garage — follow the $ beacon)
 
-## How to play
+1. **Harbour Hustle** — pick up a client at Marina Bay and drop them at
+   the Solmar Grand Hotel before the clock runs out. Pays $150.
+2. **Package Run** — collect three parcels around the city and bring
+   them to the garage. Each pickup draws police heat. Pays $250.
+3. **Harbour Escape** — take the boat from Marina Dock, sail out to
+   the harbour buoy and bring her back. Pays $400.
 
-Serve it locally with `node serve.ts`, then open http://localhost:8080.
+Finish all three and Rico pays a $500 story bonus. Cash pays for car
+repairs at the garage ($50). Your cash and progress save in the
+browser.
 
-- Drive: `W` `A` `S` `D`
-- On foot: `W` `A` `S` `D` + `Shift` to run, `Space` to jump
-- `E` enter / steal a car, `1` / `2` fists / pistol, click to shoot, `F` punch, `R` reload
-- `P` pause and see the job list, `M` mute
+## Controls
 
-## How it is built
+- **WASD** — move on foot / drive (W accelerate, S brake and reverse)
+- **E** — enter a car or the boat, step out, start a mission
+- **F** — punch (on foot; draws police heat)
+- **Shift** — run · **Space** — handbrake
+- **Mouse drag** — orbit the camera · **Wheel** — zoom
+- **P / Esc** — pause · **M** — mute · **R** — repair at the garage / retry
 
-Three.js r160 (vendored at `game/vendor/three.min.js`), plain ES modules under `game/src/` — one file per system: city, cars, traffic, pedestrians, police, combat, missions, audio, HUD/minimap, save, input, render. No network request at play time, no build step.
+## Run it
 
-## Screenshots
+Serve the repository root with any static server and open the game,
+for example:
 
-Four real renders of the game's own code: the cover avenue, on-foot combat in the plaza, a 3-star police chase, and the Clockwork delivery against the clock.
+```
+node serve.ts
+```
 
-## What the judge sees
+then open http://localhost:8080 (the game lives at `game/index.html`).
+Everything runs offline: three.js is vendored under `game/vendor/`,
+all sound is synthesized with WebAudio, and no network request is
+made at run time.
 
-The entry is judged on the game itself: the four screenshots above, a short source outline, and a live play session. The strongest moments are the systems working together — a police chase past the plaza fountain, the pistol ambush in the park, the timed delivery threading traffic on the central avenue.
+Bounty: https://make.fun/bounty/gta6-01
