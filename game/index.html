@@ -2,62 +2,49 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Solmar Bay — Storm Run</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Solmar Bay — Foggy Morning</title>
 <style>
-  html, body { margin: 0; padding: 0; overflow: hidden; background: #10141a; font-family: Arial, Helvetica, sans-serif; }
+  html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #0e1418; font-family: system-ui, sans-serif; }
   #game { position: fixed; inset: 0; }
   #game canvas { display: block; }
-  #hud { position: fixed; inset: 0; pointer-events: none; color: #fff; text-shadow: 0 1px 3px #000; }
-  #topleft { position: absolute; top: 12px; right: 16px; text-align: right; font-size: 20px; }
-  #stars { color: #ffd24a; letter-spacing: 2px; font-size: 22px; }
-  #cash { color: #7dff8a; font-size: 22px; }
-  #healthbar { width: 140px; height: 10px; background: #222; border: 1px solid #555; margin-top: 4px; margin-left: auto; }
-  #health { height: 100%; width: 100%; background: #40d040; }
-  #mode { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.55); padding: 4px 14px; border-radius: 4px; font-size: 15px; letter-spacing: 2px; }
-  #minimap { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); border: 2px solid #8899aa; background: #10141a; }
-  #objective { position: absolute; bottom: 64px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.6); padding: 8px 18px; border-radius: 4px; font-size: 17px; white-space: nowrap; }
-  #timer { position: absolute; bottom: 100px; left: 50%; transform: translateX(-50%); color: #ff8080; font-size: 20px; }
-  #toast { position: absolute; bottom: 110px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.65); padding: 6px 14px; border-radius: 4px; font-size: 15px; opacity: 0; transition: opacity 0.3s; white-space: nowrap; }
-  #speed { position: absolute; bottom: 16px; right: 18px; font-size: 26px; font-weight: bold; }
-  #status { position: absolute; bottom: 6px; left: 8px; font-size: 11px; color: #8899aa; }
-  #menu { position: fixed; inset: 0; background: rgba(10, 16, 24, 0.82); color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; pointer-events: auto; cursor: pointer; z-index: 10; }
-  #menu h1 { font-size: 42px; margin: 0 0 8px; letter-spacing: 3px; }
-  #menu h2 { font-size: 18px; color: #9fd8ff; margin: 0 0 20px; font-weight: normal; }
-  #menu p { max-width: 560px; line-height: 1.6; font-size: 15px; color: #d8dee8; }
-  #menu .keys { font-size: 14px; color: #ffd24a; margin-top: 14px; line-height: 1.9; }
-  #menu .play { margin-top: 26px; font-size: 20px; border: 2px solid #fff; padding: 10px 28px; border-radius: 6px; }
+  #hud { position: fixed; inset: 0; pointer-events: none; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.8); }
+  #hud-stars { position: absolute; top: 10px; right: 14px; font-size: 26px; color: #ffd94d; letter-spacing: 2px; }
+  #hud-cash { position: absolute; top: 44px; right: 14px; font-size: 22px; color: #7dff8a; font-weight: 700; }
+  #hud-health { position: absolute; top: 76px; right: 14px; width: 160px; height: 12px; background: rgba(255,255,255,.25); border: 1px solid rgba(255,255,255,.5); }
+  #hud-health-bar { height: 100%; width: 100%; background: #37d148; }
+  #hud-state { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,.55); padding: 4px 14px; border-radius: 4px; font-size: 15px; letter-spacing: 2px; }
+  #hud-objective { position: absolute; bottom: 64px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,.6); padding: 8px 18px; border-radius: 4px; font-size: 17px; white-space: nowrap; }
+  #hud-timer { position: absolute; bottom: 96px; left: 50%; transform: translateX(-50%); color: #ff8a7a; font-size: 18px; font-weight: 700; }
+  #hud-speed { position: absolute; bottom: 14px; right: 16px; font-size: 26px; font-weight: 700; }
+  #minimap { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); border: 2px solid rgba(255,255,255,.7); background: rgba(10,16,22,.85); }
+  #menu { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(10,16,22,.82); color: #fff; cursor: pointer; z-index: 10; }
+  #menu h1 { margin: 0 0 8px; font-size: 44px; letter-spacing: 4px; }
+  #menu p { margin: 4px 0; font-size: 17px; opacity: .9; }
+  #status { position: fixed; left: 6px; bottom: 4px; color: rgba(255,255,255,.5); font-size: 11px; z-index: 5; }
 </style>
 </head>
 <body>
 <div id="game"></div>
 <div id="hud">
-  <div id="topleft">
-    <div id="stars">☆☆☆☆☆</div>
-    <div id="cash">$0</div>
-    <div id="healthbar"><div id="health"></div></div>
-  </div>
-  <div id="mode">E · ON FOOT</div>
   <canvas id="minimap" width="150" height="150"></canvas>
-  <div id="timer"></div>
-  <div id="objective">Steal a car</div>
-  <div id="toast"></div>
-  <div id="speed">0 km/h</div>
-  <div id="status">loading</div>
+  <div id="hud-state">E · ON FOOT</div>
+  <div id="hud-stars">☆☆☆☆☆</div>
+  <div id="hud-cash">$0</div>
+  <div id="hud-health"><div id="hud-health-bar"></div></div>
+  <div id="hud-timer"></div>
+  <div id="hud-objective">Steal a car</div>
+  <div id="hud-speed">0 km/h</div>
 </div>
 <div id="menu">
-  <h1 id="menu-title">SOLMAR BAY — STORM RUN</h1>
-  <h2>A rainstorm open-world crime game — Rico Marlowe vs the storm</h2>
-  <p>Solmar Bay is drowning in a storm. Steal cars, outrun the police through the rain,
-  run six missions for Vera Costa, and build Rico's ride at the garage. The lighthouse
-  beam is your compass — the storm is your cover.</p>
-  <div class="keys">
-    W A S D — drive / walk &nbsp;·&nbsp; E — enter / exit car &nbsp;·&nbsp; F — shoot<br>
-    SPACE — brake &nbsp;·&nbsp; SHIFT — run &nbsp;·&nbsp; 1 / 2 / 3 at the garage — repair / engine / armor
-  </div>
-  <div class="play">CLICK TO PLAY</div>
+  <h1>SOLMAR BAY</h1>
+  <p>Foggy Morning — Rico Marlowe runs jobs for Vera Costa</p>
+  <p>WASD drive &amp; walk · E enter / exit car · F shoot · R repair at the garage</p>
+  <p>Click to play</p>
 </div>
+<div id="status">loading</div>
 <script src="./vendor/three.min.js"></script>
+<script type="importmap">{"imports": {"three": "./src/three-shim.js"}}</script>
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>
