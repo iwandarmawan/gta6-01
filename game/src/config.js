@@ -1,50 +1,47 @@
-// Shared constants for Solmar Bay — night city. Sea to the north (negative z),
-// the city grid in the middle, the airfield to the south-west.
+// config.js — Solmar Bay at dawn: layout, palette, missions, economy.
+// Sea is SOUTH (z > 150). Sun rises in the EAST (+x), low and warm.
 export const WORLD = {
-  minX: -220,
-  maxX: 220,
-  minZ: -220,
-  maxZ: 220,
-  seaZ: -150, // z below this is water
-  beachZ: -132, // z below this is sand
-  coastRoadZ: -138,
+  size: 420,
+  seaZ: 150,
+  plaza: { x: 0, z: 0 },
+  garage: { x: 25, z: -45 },
+  lighthouse: { x: 0, z: 185 },
+  marina: { x: -140, z: 165 },
+  airfield: { x: 150, z: -110 },
+  streetsX: [-120, -60, 0, 60, 120],
+  streetsZ: [-120, -60, 0, 60, 120],
+  coastZ: 140,
 };
 
-export const POI = {
-  plaza: { x: 0, z: 0, label: 'Palm Plaza' },
-  garage: { x: 70, z: 70, label: "Rico's Garage" },
-  lighthouse: { x: -185, z: -178, label: 'Lighthouse Point' },
-  marina: { x: 150, z: -152, label: 'Marina' },
-  airfield: { x: -150, z: 150, label: 'Airfield' },
+export const DAWN = {
+  skyTop: 0x7fa8d8, skyHorizon: 0xffd9a8, sun: 0xffdf9a,
+  fog: 0xf2b27a, fogNear: 90, fogFar: 420,
+  ambient: 0xffe2c0, ambientIntensity: 1.15,
+  hemiSky: 0xffd9a0, hemiGround: 0x5a4a3a, hemiIntensity: 0.85,
+  sunLight: 0xffc98a, sunIntensity: 1.1,
+  moon: null, // dawn: no moon, the sun does the work
+  road: 0x33363e, roadLine: 0xd8c9a0,
+  ground: 0x7d6b4f, beach: 0xd9b98a, sea: 0x35597a,
+  windowLit: 0xffd27a, windowDark: 0x2a3242, windowEmissive: 0.25,
+  lampGlow: 0xffd9a0, lampPoolOpacity: 0.15,
 };
 
 export const MISSIONS = [
-  { id: 'wheels', name: 'First Wheels', pay: 150, text: 'Steal a car', hint: 'Walk up to the red sedan and press E' },
-  { id: 'harbour', name: 'Harbour Escape', pay: 300, text: 'Reach the lighthouse point', hint: 'Take the skiff from the marina' },
-  { id: 'taxi', name: 'City Taxi', pay: 250, time: 90, text: 'Pick up the fare at Palm Plaza', hint: 'Drive to the beacon before the timer runs out' },
-  { id: 'courier', name: 'Sunset Courier', pay: 400, time: 120, text: 'Deliver 3 packages', hint: 'Follow the beacons, 3 drops' },
-  { id: 'leap', name: 'Rooftop Leap', pay: 350, text: 'Jump the airfield ramp', hint: 'Hit the ramp at full speed' },
-  { id: 'cache', name: 'Lighthouse Cache', pay: 500, text: 'Collect 5 packages', hint: 'Five caches around the lighthouse point' },
+  { id: 'wheels', name: 'First Wheels', pay: 150, objective: 'Steal a car (walk up and press E)' },
+  { id: 'harbour', name: 'Harbour Escape', pay: 300, objective: 'Take the skiff to the lighthouse point' },
+  { id: 'taxi', name: 'City Taxi', pay: 250, time: 90, objective: 'Pick up the fare at Palm Plaza' },
+  { id: 'courier', name: 'Sunset Courier', pay: 400, time: 120, drops: 3, objective: 'Deliver 3 packages before sunrise ends' },
+  { id: 'rooftop', name: 'Rooftop Leap', pay: 350, objective: 'Reach the rooftop cache' },
+  { id: 'cache', name: 'Lighthouse Cache', pay: 500, packages: 5, objective: 'Collect 5 packages at the lighthouse' },
 ];
 
-export const FARES = [
-  { from: 'Palm Plaza', to: 'Airfield', pay: 120 },
-  { from: 'Airfield', to: 'Marina', pay: 150 },
-  { from: 'Marina', to: 'Palm Plaza', pay: 140 },
-];
-
-export const PRICES = { repair: 50, engine: 400, armor: 300 };
-
-export const NIGHT = {
-  sky: 0x0a1128,
-  fog: 0x0a1128,
-  ground: 0x1a2030,
-  road: 0x141821,
-  sand: 0x8a7a52,
-  sea: 0x06182e,
-  moon: 0x9db4ff,
-  lamp: 0xffd27a,
-  windowWarm: 0xffc46b,
-  windowCool: 0x7fd4ff,
-  neon: [0xff4fa3, 0x39d5ff, 0x7dff5e, 0xffb347],
+export const FARES = [120, 150, 140];
+export const GARAGE = { repair: 50, engine: 400, armor: 300, engineBoost: 1.25, armorHp: 50 };
+export const PLAYER = { hp: 100, walkSpeed: 6, runSpeed: 10 };
+export const VEHICLES = {
+  sedan: { top: 30, color: 0xc23a2e, name: 'Sedan' },
+  pickup: { top: 28, color: 0xd97a2b, name: 'Pickup' },
+  bike: { top: 34, color: 0x2a7ad9, name: 'Coast Runner' },
+  skiff: { top: 22, color: 0xe8e8e8, name: 'Skiff' },
+  police: { top: 36, color: 0xe8e8e8, name: 'Interceptor' },
 };

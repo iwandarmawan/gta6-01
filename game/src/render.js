@@ -1,56 +1,55 @@
-// Renderer, moonlight, camera. The follow camera lerps behind the player in
-// normal play and snaps instantly in shot mode (the virtual-time budget in
-// headless runs never lets a lerp converge).
-import { NIGHT } from './config.js';
+// render.js — renderer, dawn sky, lights.
+import THREE from 'three';
+import { DAWN } from './config.js';
 
-export function makeRender() {
-  const canvas = document.getElementById('game');
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  if ('sRGBEncoding' in THREE) renderer.outputEncoding = THREE.sRGBEncoding;
-  const scene = new THREE.Scene();
-  scene.background = new THREE.Color(NIGHT.sky);
-  scene.fog = new THREE.FogExp2(NIGHT.fog, 0.0032);
-  const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 900);
-
-  // Night lighting: dim blue ambient, cold moonlight, a soft hemisphere.
-  // Kept bright enough that the city reads in a screenshot.
-  scene.add(new THREE.AmbientLight(0x3a4666, 1.25));
-  const moon = new THREE.DirectionalLight(NIGHT.moon, 1.0);
-  moon.position.set(-120, 180, -220);
-  scene.add(moon);
-  scene.add(new THREE.HemisphereLight(0x1a2440, 0x0a0a12, 0.85));
-
-  // One headlight spotlight follows the player's car.
-  const headlight = new THREE.SpotLight(0xffe9a8, 1.4, 42, 0.5, 0.45, 1.2);
-  scene.add(headlight);
-  scene.add(headlight.target);
-
-  window.addEventListener('resize', () => {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-  });
-
-  return { renderer, scene, camera, headlight };
+export function makeSkyTexture() {
+  const c = document.createElement('canvas');
+  c.width = 4; c.height = 256;
+  const g = c.getContext('2d');
+  const grad = g.createLinearGradient(0, 0, 0, 256);
+  grad.addColorStop(0, '#7fa8d8');
+  grad.addColorStop(0.45, '#f7c98d');
+  grad.addColorStop(0.62, '#ffd9a8');
+  grad.addColorStop(1, '#ffeecf');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 4, 256);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
 }
 
-export function followCamera(camera, target, heading, dist, height, snap, dt, side) {
-  const cx0 = target.x - Math.sin(heading) * dist;
-  const cz0 = target.z - Math.cos(heading) * dist;
-  // Optional lateral offset (used by staged shots so the chase reads from
-  // the side instead of dead behind the car).
-  const s = side || 0;
-  const cx = cx0 + Math.cos(heading) * s;
-  const cz = cz0 - Math.sin(heading) * s;
-  if (snap) {
-    camera.position.set(cx, height, cz);
-  } else {
-    const k = Math.min(1, dt * 5);
-    camera.position.x += (cx - camera.position.x) * k;
-    camera.position.y += (height - camera.position.y) * k;
-    camera.position.z += (cz - camera.position.z) * k;
-  }
-  camera.lookAt(target.x, 1.6, target.z);
+export function createRenderer() {
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  document.getElementById('app').appendChild(renderer.domElement);
+  return renderer;
+}
+
+export function createScene() {
+  const scene = new THREE.Scene();
+  scene.background = makeSkyTexture();
+  scene.fog = new THREE.Fog(DAWN.fog, DAWN.fogNear, DAWN.fogFar);
+  const ambient = new THREE.AmbientLight(DAWN.ambient, DAWN.ambientIntensity);
+  scene.add(ambient);
+  const hemi = new THREE.HemisphereLight(DAWN.hemiSky, DAWN.hemiGround, DAWN.hemiIntensity);
+  scene.add(hemi);
+  // Low eastern sun: long dawn shadows pointing west.
+  const sun = new THREE.DirectionalLight(DAWN.sunLight, DAWN.sunIntensity);
+  sun.position.set(300, 55, 40);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.camera.left = -220; sun.shadow.camera.right = 220;
+  sun.shadow.camera.top = 220; sun.shadow.camera.bottom = -220;
+  sun.shadow.camera.far = 800;
+  scene.add(sun);
+  return { scene, sun };
+}
+
+export function createCamera() {
+  const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 1200);
+  camera.position.set(0, 30, 60);
+  return camera;
 }

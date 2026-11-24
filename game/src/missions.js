@@ -1,127 +1,85 @@
-// Missions: Rico Marlowe's six-job night arc for Vera Costa, then repeatable
-// taxi fares. A beacon pillar marks the target; timers and package counts
-// drive the objectives. All positions are world coordinates.
-import { MISSIONS, FARES, POI } from './config.js';
+// missions.js — the 6-mission story arc for Rico Marlowe / Vera Costa.
+// In shot mode the staged objective must NOT be overwritten (v12 lesson):
+// updateMissions returns early while state.shotMode is on.
+import THREE from 'three';
+import { MISSIONS, WORLD } from './config.js';
+import { sfx } from './audio.js';
 
-const BEACONS = {
-  wheels: { x: 6, z: -4 },
-  harbour: { x: POI.lighthouse.x, z: POI.lighthouse.z + 8 },
-  taxi: { x: POI.plaza.x, z: POI.plaza.z },
-  courier: [
-    { x: -80, z: 40 }, { x: 120, z: -60 }, { x: POI.marina.x, z: POI.marina.z + 6 },
-  ],
-  leap: { x: POI.airfield.x, z: POI.airfield.z },
-  cache: [
-    { x: -178, z: -168 }, { x: -192, z: -160 }, { x: -170, z: -185 },
-    { x: -196, z: -178 }, { x: -182, z: -150 },
-  ],
-};
-
-export function makeMissions() {
+export function missionState(save) {
   return {
-    index: 0,
-    phase: 'brief', // brief | active | done
-    timer: 0,
-    drop: 0,
-    fare: null,
-    fareStep: 0,
-    toast: '',
-    toastIn: 0,
+    index: save.mission || 0,
+    phase: 'active', // active | done
+    objective: MISSIONS[save.mission || 0].objective,
+    timer: MISSIONS[save.mission || 0].time || 0,
+    drops: 0, packages: 0,
   };
 }
 
-export function currentMission(m) {
-  return MISSIONS[m.index] || null;
+export function currentMission(missions) {
+  return MISSIONS[Math.min(missions.index, MISSIONS.length - 1)];
 }
 
-export function missionBeacon(m) {
-  const cur = currentMission(m);
-  if (!cur) return null;
-  if (m.fare) return m.fareStep === 0 ? { x: 0, z: 0 } : { x: POI.airfield.x, z: POI.airfield.z };
-  const b = BEACONS[cur.id];
-  if (Array.isArray(b)) return b[Math.min(m.drop, b.length - 1)];
-  return b;
+export function makeBeacon() {
+  const g = new THREE.Group();
+  const pillar = new THREE.Mesh(
+    new THREE.CylinderGeometry(1.2, 1.2, 30, 12, 1, true),
+    new THREE.MeshBasicMaterial({ color: 0xffd27a, transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false }));
+  pillar.position.y = 15;
+  g.add(pillar);
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(2.2, 0.18, 8, 32),
+    new THREE.MeshBasicMaterial({ color: 0xffd27a }));
+  ring.rotation.x = Math.PI / 2; ring.position.y = 0.15;
+  g.add(ring);
+  return g;
 }
 
-export function startMission(m, G) {
-  const cur = currentMission(m);
-  if (!cur) return;
-  m.phase = 'active';
-  m.timer = cur.time || 0;
-  m.drop = 0;
-  m.toast = `${cur.name} — $${cur.pay}`;
-  m.toastIn = 3;
-  G.objective = cur.text;
+export function placeBeacon(beacon, x, z) {
+  beacon.position.set(x, 0, z);
+  beacon.visible = true;
 }
 
-export function updateMissions(m, G, dt) {
-  if (m.toastIn > 0) m.toastIn -= dt;
-  const cur = currentMission(m);
-  if (m.phase === 'brief' && cur) {
-    startMission(m, G);
-    return;
+export function missionTarget(missions) {
+  const m = currentMission(missions);
+  switch (m.id) {
+    case 'wheels': return { x: 8, z: 6 };
+    case 'harbour': return { x: WORLD.marina.x, z: WORLD.marina.z };
+    case 'taxi': return { x: WORLD.plaza.x, z: WORLD.plaza.z };
+    case 'courier': return { x: 60, z: -60 };
+    case 'rooftop': return { x: -60, z: -60 };
+    case 'cache': return { x: WORLD.lighthouse.x, z: WORLD.lighthouse.z - 8 };
+    default: return { x: 0, z: 0 };
   }
-  if (!cur || m.phase !== 'active') return;
-  if (m.timer > 0) {
+}
+
+export function updateMissions(state, dt) {
+  // Frozen shot mode: the staged objective/toast/timer/beacon stay exactly as staged.
+  if (state.shotMode) return;
+  const m = state.missions;
+  const def = currentMission(m);
+  if (m.phase === 'done') return;
+  if (def.time) {
     m.timer -= dt;
     if (m.timer <= 0) {
-      m.toast = 'Too slow — the job fell through';
-      m.toastIn = 3;
-      m.index += 1;
-      m.phase = 'brief';
-      G.objective = 'Find the next job';
-      return;
+      m.timer = def.time;
+      state.toast = 'Out of time — mission reset.';
+      state.toastAt = performance.now();
     }
   }
-  const b = missionBeacon(m);
-  if (!b) return;
-  const px = G.player.position.x;
-  const pz = G.player.position.z;
-  const d = Math.hypot(px - b.x, pz - b.z);
-  if (d < 7) {
-    if (Array.isArray(BEACONS[cur.id])) {
-      m.drop += 1;
-      G.cash += 0; // paid at the end of the chain
-      if (m.drop >= BEACONS[cur.id].length) {
-        G.cash += cur.pay;
-        G.score += cur.pay;
-        m.toast = `${cur.name} complete — $${cur.pay}`;
-        m.toastIn = 3;
-        m.index += 1;
-        m.phase = 'brief';
-        G.objective = 'Find the next job';
-      } else {
-        G.objective = `${cur.text} (${m.drop}/${BEACONS[cur.id].length})`;
-      }
-    } else if (cur.id === 'wheels') {
-      // Stealing the car is the objective; reaching the sedan counts.
-      G.cash += cur.pay;
-      G.score += cur.pay;
-      m.toast = `${cur.name} complete — $${cur.pay}`;
-      m.toastIn = 3;
-      m.index += 1;
-      m.phase = 'brief';
-      G.objective = 'Find the next job';
-    } else {
-      G.cash += cur.pay;
-      G.score += cur.pay;
-      m.toast = `${cur.name} complete — $${cur.pay}`;
-      m.toastIn = 3;
-      m.index += 1;
-      m.phase = 'brief';
-      G.objective = 'Find the next job';
-    }
+  // Arrive at the beacon: complete the mission, pay out, advance.
+  const t = missionTarget(m);
+  const who = state.vehicle || state.player;
+  const dx = who.position.x - t.x;
+  const dz = who.position.z - t.z;
+  if (dx * dx + dz * dz < 36) {
+    state.cash += def.pay;
+    sfx.cash();
+    state.toast = `${def.name} complete — $${def.pay}`;
+    state.toastAt = performance.now();
+    m.index = Math.min(m.index + 1, MISSIONS.length - 1);
+    m.phase = m.index >= MISSIONS.length - 1 && def.id === 'cache' ? 'done' : 'active';
+    const next = currentMission(m);
+    m.objective = next.objective;
+    m.timer = next.time || 0;
   }
-}
-
-export function startFare(m, G) {
-  if (m.index < MISSIONS.length) return false;
-  m.fare = FARES[Math.floor(Math.random() * FARES.length)];
-  m.fareStep = 0;
-  m.timer = 90;
-  m.phase = 'active';
-  G.objective = `Taxi: pick up at ${m.fare.from}`;
-  m.toast = `Taxi fare — $${m.fare.pay}`;
-  m.toastIn = 3;
-  return true;
 }

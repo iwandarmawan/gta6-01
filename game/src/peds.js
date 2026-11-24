@@ -1,70 +1,54 @@
-// Pedestrians: night crowds on the sidewalks, a few standing at the plaza,
-// scattering when a shot goes off nearby.
+// peds.js — pedestrians strolling the plaza and sidewalks.
+import THREE from 'three';
 import { mulberry32, pick, range } from './rng.js';
 
-const SHIRTS = [0xc94f4f, 0x4f7dc9, 0x4fc97d, 0xc9a44f, 0x9a4fc9, 0xdddddd, 0x4fc9c2];
+const SHIRTS = [0xc23a2e, 0x2a7ad9, 0x3a9a4a, 0xe8a02a, 0x8a4ad9, 0xd9d9d9];
 
-export function makePeds(scene, count) {
+export function makePed(rng) {
+  const g = new THREE.Group();
+  const shirt = new THREE.MeshStandardMaterial({ color: pick(rng, SHIRTS), roughness: 0.8 });
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.34, 0.9, 8), shirt);
+  body.position.y = 0.95; body.castShadow = true;
+  g.add(body);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.26, 10, 8),
+    new THREE.MeshStandardMaterial({ color: 0xd9a986, roughness: 0.7 }));
+  head.position.y = 1.65; g.add(head);
+  const legs = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.6, 0.24),
+    new THREE.MeshStandardMaterial({ color: 0x2a2a34, roughness: 0.9 }));
+  legs.position.y = 0.3; g.add(legs);
+  g.userData.heading = range(rng, 0, Math.PI * 2);
+  g.userData.speed = range(rng, 0.8, 1.6);
+  g.userData.turnAt = 0;
+  return g;
+}
+
+export function spawnPeds(scene, count = 18) {
   const rng = mulberry32(4242);
   const peds = [];
   for (let i = 0; i < count; i++) {
-    const g = new THREE.Group();
-    const shirt = new THREE.MeshLambertMaterial({
-      color: pick(rng, SHIRTS), emissive: pick(rng, SHIRTS), emissiveIntensity: 0.25,
-    });
-    const skin = new THREE.MeshLambertMaterial({ color: 0xc9a184 });
-    const legs = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.8, 0.28),
-      new THREE.MeshLambertMaterial({ color: 0x1a1d26 }));
-    legs.position.y = 0.4;
-    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.65, 0.32), shirt);
-    torso.position.y = 1.1;
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.24, 10, 8), skin);
-    head.position.y = 1.65;
-    g.add(legs, torso, head);
-    const onStreet = rng() < 0.5;
-    g.position.set(
-      onStreet ? range(rng, -170, 170) : range(rng, -170, 170),
-      0,
-      range(rng, -120, 150),
-    );
-    g.userData = {
-      speed: range(rng, 0.8, 1.6),
-      heading: range(rng, 0, Math.PI * 2),
-      changeIn: range(rng, 3, 9),
-      flee: 0,
-    };
-    scene.add(g);
-    peds.push(g);
+    const p = makePed(rng);
+    const nearPlaza = i < 8;
+    const x = nearPlaza ? range(rng, -24, 24) : range(rng, -140, 140);
+    const z = nearPlaza ? range(rng, -24, 24) : pick(rng, [-120, -60, 0, 60, 120]) + range(rng, -4, 4);
+    p.position.set(x, 0, z);
+    scene.add(p);
+    peds.push(p);
   }
   return peds;
 }
 
-export function updatePeds(peds, dt, dangerPos) {
+export function updatePeds(peds, dt, time) {
   for (const p of peds) {
-    const u = p.userData;
-    u.changeIn -= dt;
-    if (dangerPos && Math.hypot(p.position.x - dangerPos.x, p.position.z - dangerPos.z) < 18) {
-      u.flee = 2.5;
+    if (time > p.userData.turnAt) {
+      p.userData.heading += (Math.random() - 0.5) * 0.9;
+      p.userData.turnAt = time + 2 + Math.random() * 3;
     }
-    if (u.flee > 0) {
-      u.flee -= dt;
-      const away = Math.atan2(p.position.x - dangerPos.x, p.position.z - dangerPos.z);
-      p.position.x += Math.sin(away) * 3.2 * dt;
-      p.position.z += Math.cos(away) * 3.2 * dt;
-      p.rotation.y = away;
-      continue;
-    }
-    if (u.changeIn <= 0) {
-      u.heading = Math.random() * Math.PI * 2;
-      u.changeIn = 3 + Math.random() * 6;
-    }
-    p.position.x += Math.sin(u.heading) * u.speed * dt;
-    p.position.z += Math.cos(u.heading) * u.speed * dt;
-    if (p.position.x < -175) p.position.x = -175;
-    if (p.position.x > 175) p.position.x = 175;
-    if (p.position.z < -125) p.position.z = -125;
-    if (p.position.z > 175) p.position.z = 175;
-    p.rotation.y = u.heading;
-    p.position.y = Math.abs(Math.sin(performance.now() / 300 + u.speed * 10)) * 0.05;
+    p.position.x += Math.sin(p.userData.heading) * p.userData.speed * dt;
+    p.position.z += Math.cos(p.userData.heading) * p.userData.speed * dt;
+    if (Math.abs(p.position.x) > 165) p.userData.heading += Math.PI;
+    if (p.position.z > 145 || p.position.z < -165) p.userData.heading += Math.PI;
+    p.rotation.y = p.userData.heading;
+    // Gentle walk bob.
+    p.position.y = Math.abs(Math.sin(time * 6 + p.position.x)) * 0.05;
   }
 }

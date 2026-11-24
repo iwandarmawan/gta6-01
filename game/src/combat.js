@@ -1,56 +1,51 @@
-// Combat: hitscan shooting with a tracer and muzzle flash. Shooting in
-// public raises the wanted level; hitting a pedestrian or a police car
-// raises it faster.
-export function makeCombat(scene) {
-  const tracerMat = new THREE.MeshBasicMaterial({ color: 0xffe9a8, transparent: true, opacity: 0.9 });
-  const tracer = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.06, 1), tracerMat);
-  tracer.visible = false;
-  scene.add(tracer);
-  return { tracer, cooldown: 0, flash: 0 };
-}
+// combat.js — shooting: tracer + muzzle flash + a simple hit check.
+// Shooting at police raises the wanted level; that is the risk/reward loop.
+import THREE from 'three';
+import { sfx } from './audio.js';
 
-export function shoot(combat, origin, dir, targets, onCrime) {
-  if (combat.cooldown > 0) return false;
-  combat.cooldown = 0.28;
-  combat.flash = 0.06;
-  const rangeMax = 60;
+export function shoot(state) {
+  const { scene, player, police, peds } = state;
+  sfx.shot();
+  // Muzzle flash: a brief bright sphere at the player's hand.
+  const flash = new THREE.Mesh(
+    new THREE.SphereGeometry(0.35, 8, 6),
+    new THREE.MeshBasicMaterial({ color: 0xffe9b0, transparent: true, opacity: 0.9 }));
+  flash.position.copy(player.position).add(new THREE.Vector3(0, 1.4, 0));
+  scene.add(flash);
+  setTimeout(() => scene.remove(flash), 70);
+  // Tracer: a thin bright line 24 units forward.
+  const dir = new THREE.Vector3(Math.sin(player.rotation.y), 0, Math.cos(player.rotation.y));
+  const from = player.position.clone().add(new THREE.Vector3(0, 1.4, 0));
+  const to = from.clone().add(dir.clone().multiplyScalar(24));
+  const geo = new THREE.BufferGeometry().setFromPoints([from, to]);
+  const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0xffe9b0 }));
+  scene.add(line);
+  setTimeout(() => scene.remove(line), 90);
+  // Hit check: nearest police car or ped within a narrow cone ahead.
   let hit = null;
-  let hitDist = rangeMax;
-  for (const t of targets) {
-    const to = { x: t.position.x - origin.x, z: t.position.z - origin.z };
-    const along = to.x * dir.x + to.z * dir.z;
-    if (along < 0 || along > rangeMax) continue;
-    const perp = Math.abs(to.x * dir.z - to.z * dir.x);
-    if (perp < 1.6 && along < hitDist) {
-      hit = t;
-      hitDist = along;
+  for (const car of police) {
+    const d = car.position.distanceTo(player.position);
+    if (d < 26) {
+      const toCar = car.position.clone().sub(player.position).normalize();
+      if (toCar.dot(dir) > 0.94) { hit = car; break; }
     }
   }
-  const end = {
-    x: origin.x + dir.x * hitDist,
-    y: 1.3,
-    z: origin.z + dir.z * hitDist,
-  };
-  const tr = combat.tracer;
-  tr.visible = true;
-  tr.position.set((origin.x + end.x) / 2, 1.3, (origin.z + end.z) / 2);
-  tr.scale.z = hitDist;
-  tr.lookAt(end.x, 1.3, end.z);
   if (hit) {
-    hit.userData.hp = (hit.userData.hp ?? 3) - 1;
-    onCrime(1);
-    if (hit.userData.hp <= 0) {
-      hit.userData.dead = true;
-      onCrime(1);
-    }
+    state.wanted = Math.min(5, state.wanted + 1);
+    state.toast = 'Police hit! Wanted level up.';
+    state.toastAt = performance.now();
   } else {
-    onCrime(0);
+    for (const p of peds) {
+      const d = p.position.distanceTo(player.position);
+      if (d < 20) {
+        const toPed = p.position.clone().sub(player.position).normalize();
+        if (toPed.dot(dir) > 0.96) {
+          state.wanted = Math.min(5, state.wanted + 1);
+          state.toast = 'Pedestrian hit! Wanted level up.';
+          state.toastAt = performance.now();
+          break;
+        }
+      }
+    }
   }
-  return !!hit;
-}
-
-export function updateCombat(combat, dt) {
-  combat.cooldown = Math.max(0, combat.cooldown - dt);
-  combat.flash = Math.max(0, combat.flash - dt);
-  if (combat.flash <= 0) combat.tracer.visible = false;
 }
