@@ -1,98 +1,78 @@
-// Procedural sound, no audio files: an engine hum that follows speed, a
-// two-tone police siren while wanted, a shot crack and a mission chime.
-// Everything is guarded — headless runs and browsers without a gesture get
-// silence instead of an exception.
-export class AudioSys {
-  constructor() {
-    this.ctx = null;
-    this.engine = null;
-    this.engineGain = null;
-    this.sirenOsc = null;
-    this.sirenGain = null;
-    this.sirenHigh = false;
-    this.sirenTimer = 0;
-  }
-
-  ensure() {
-    if (this.ctx) {
-      if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {});
-      return;
-    }
-    try {
-      const AC = window.AudioContext || window.webkitAudioContext;
-      if (!AC) return;
-      this.ctx = new AC();
-      const osc = this.ctx.createOscillator();
-      osc.type = 'sawtooth';
-      osc.frequency.value = 60;
-      const filter = this.ctx.createBiquadFilter();
-      filter.type = 'lowpass';
-      filter.frequency.value = 400;
-      this.engineGain = this.ctx.createGain();
-      this.engineGain.gain.value = 0;
-      osc.connect(filter);
-      filter.connect(this.engineGain);
-      this.engineGain.connect(this.ctx.destination);
-      osc.start();
-      this.engine = osc;
-      this.sirenOsc = this.ctx.createOscillator();
-      this.sirenOsc.type = 'sine';
-      this.sirenOsc.frequency.value = 700;
-      this.sirenGain = this.ctx.createGain();
-      this.sirenGain.gain.value = 0;
-      this.sirenOsc.connect(this.sirenGain);
-      this.sirenGain.connect(this.ctx.destination);
-      this.sirenOsc.start();
-    } catch {
-      this.ctx = null;
-    }
-  }
-
-  setEngine(speed01) {
-    if (!this.ctx || !this.engine) return;
-    this.engine.frequency.value = 55 + speed01 * 130;
-    this.engineGain.gain.value = 0.02 + speed01 * 0.05;
-  }
-
-  setSiren(on, dt) {
-    if (!this.ctx || !this.sirenOsc) return;
-    if (!on) {
-      this.sirenGain.gain.value = 0;
-      return;
-    }
-    this.sirenTimer += dt;
-    if (this.sirenTimer > 0.4) {
-      this.sirenTimer = 0;
-      this.sirenHigh = !this.sirenHigh;
-      this.sirenOsc.frequency.value = this.sirenHigh ? 950 : 700;
-    }
-    this.sirenGain.gain.value = 0.03;
-  }
-
-  blip(freq, dur, vol, type = 'sine') {
-    if (!this.ctx) return;
-    try {
-      const osc = this.ctx.createOscillator();
-      const gain = this.ctx.createGain();
-      osc.type = type;
-      osc.frequency.value = freq;
-      gain.gain.setValueAtTime(vol, this.ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + dur);
-      osc.connect(gain);
-      gain.connect(this.ctx.destination);
-      osc.start();
-      osc.stop(this.ctx.currentTime + dur);
-    } catch {
-      // Silence on failure.
-    }
-  }
-
-  shot() {
-    this.blip(180, 0.12, 0.15, 'square');
-  }
-
-  chime() {
-    this.blip(660, 0.15, 0.08);
-    setTimeout(() => this.blip(880, 0.25, 0.08), 120);
-  }
+// Procedural night audio: engine hum, police siren, gunshot, cash chime.
+// Everything is synthesized with WebAudio — no audio files, no network.
+export function makeAudio() {
+  let ctx = null;
+  let engineOsc = null;
+  let engineGain = null;
+  let sirenOsc = null;
+  let sirenGain = null;
+  const api = {
+    ensure() {
+      if (ctx) return;
+      try {
+        ctx = new (window.AudioContext || window.webkitAudioContext)();
+        engineOsc = ctx.createOscillator();
+        engineOsc.type = 'sawtooth';
+        engineOsc.frequency.value = 50;
+        engineGain = ctx.createGain();
+        engineGain.gain.value = 0;
+        const filter = ctx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.value = 420;
+        engineOsc.connect(filter);
+        filter.connect(engineGain);
+        engineGain.connect(ctx.destination);
+        engineOsc.start();
+        sirenOsc = ctx.createOscillator();
+        sirenOsc.type = 'triangle';
+        sirenOsc.frequency.value = 700;
+        sirenGain = ctx.createGain();
+        sirenGain.gain.value = 0;
+        sirenOsc.connect(sirenGain);
+        sirenGain.connect(ctx.destination);
+        sirenOsc.start();
+      } catch (e) {
+        ctx = null;
+      }
+    },
+    engine(speed, on) {
+      if (!ctx) return;
+      engineGain.gain.value = on ? 0.03 + Math.min(0.05, Math.abs(speed) * 0.0012) : 0;
+      engineOsc.frequency.value = 48 + Math.abs(speed) * 2.2;
+    },
+    siren(on, t) {
+      if (!ctx) return;
+      sirenGain.gain.value = on ? 0.018 : 0;
+      if (on) sirenOsc.frequency.value = 650 + Math.sin(t * 4) * 180;
+    },
+    shot() {
+      if (!ctx) return;
+      const dur = 0.12;
+      const buf = ctx.createBuffer(1, ctx.sampleRate * dur, ctx.sampleRate);
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      const gain = ctx.createGain();
+      gain.gain.value = 0.14;
+      src.connect(gain);
+      gain.connect(ctx.destination);
+      src.start();
+    },
+    chime() {
+      if (!ctx) return;
+      [880, 1318].forEach((f, i) => {
+        const o = ctx.createOscillator();
+        o.type = 'sine';
+        o.frequency.value = f;
+        const g = ctx.createGain();
+        g.gain.value = 0.06;
+        o.connect(g);
+        g.connect(ctx.destination);
+        o.start(ctx.currentTime + i * 0.09);
+        o.stop(ctx.currentTime + i * 0.09 + 0.25);
+      });
+    },
+  };
+  return api;
 }

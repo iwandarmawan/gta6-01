@@ -1,69 +1,56 @@
-// Combat: click to shoot from the camera's centre. A tracer flashes, the
-// nearest cop or pedestrian in the line of fire takes the hit, and the law
-// notices. Shooting is a crime — it raises the wanted level.
-const THREE = window.THREE;
-
-import { WANTED } from './config.js';
-
-// Ray-sphere test: does the ray (origin, dir) pass within r of (x, y, z)?
-// Returns the distance along the ray, or Infinity.
-function raySphere(ox, oy, oz, dx, dy, dz, x, y, z, r) {
-  const cx = x - ox;
-  const cy = y - oy;
-  const cz = z - oz;
-  const t = cx * dx + cy * dy + cz * dz;
-  if (t < 0) return Infinity;
-  const d2 = cx * cx + cy * cy + cz * cz - t * t;
-  return d2 <= r * r ? t : Infinity;
+// Combat: hitscan shooting with a tracer and muzzle flash. Shooting in
+// public raises the wanted level; hitting a pedestrian or a police car
+// raises it faster.
+export function makeCombat(scene) {
+  const tracerMat = new THREE.MeshBasicMaterial({ color: 0xffe9a8, transparent: true, opacity: 0.9 });
+  const tracer = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.06, 1), tracerMat);
+  tracer.visible = false;
+  scene.add(tracer);
+  return { tracer, cooldown: 0, flash: 0 };
 }
 
-export function shoot(G) {
-  const cam = G.camera;
-  const origin = cam.position;
-  const dir = new THREE.Vector3();
-  cam.getWorldDirection(dir);
-  const from = new THREE.Vector3(G.player.pos.x, 1.4, G.player.pos.z);
-
-  let best = null;
-  let bestT = 90;
-  for (const u of G.police.targets()) {
-    const t = raySphere(origin.x, origin.y, origin.z, dir.x, dir.y, dir.z, u.x, 1, u.z, u.r);
-    if (t < bestT) {
-      bestT = t;
-      best = { kind: 'cop', unit: u.unit };
+export function shoot(combat, origin, dir, targets, onCrime) {
+  if (combat.cooldown > 0) return false;
+  combat.cooldown = 0.28;
+  combat.flash = 0.06;
+  const rangeMax = 60;
+  let hit = null;
+  let hitDist = rangeMax;
+  for (const t of targets) {
+    const to = { x: t.position.x - origin.x, z: t.position.z - origin.z };
+    const along = to.x * dir.x + to.z * dir.z;
+    if (along < 0 || along > rangeMax) continue;
+    const perp = Math.abs(to.x * dir.z - to.z * dir.x);
+    if (perp < 1.6 && along < hitDist) {
+      hit = t;
+      hitDist = along;
     }
   }
-  for (const p of G.peds.list) {
-    if (p.down) continue;
-    const t = raySphere(origin.x, origin.y, origin.z, dir.x, dir.y, dir.z, p.x, 1.2, p.z, 1);
-    if (t < bestT) {
-      bestT = t;
-      best = { kind: 'ped', ped: p };
-    }
-  }
-
-  const hit = origin.clone().addScaledVector(dir, Math.min(bestT, 90));
-  // Tracer line, gone in a blink.
-  const geo = new THREE.BufferGeometry().setFromPoints([from, hit]);
-  const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0xffe9a8, transparent: true, opacity: 0.9 }));
-  G.scene.add(line);
-  G.tracers.push({ line, ttl: 0.09 });
-  G.audio.shot();
-
-  if (!best) return;
-  if (best.kind === 'cop') {
-    best.unit.v.hp -= 34;
-    G.addWanted(WANTED.shootCop);
-    if (best.unit.v.hp <= 0) {
-      best.unit.v.disabled = true;
-      best.unit.speed = 0;
-      G.toast('Interceptor disabled');
+  const end = {
+    x: origin.x + dir.x * hitDist,
+    y: 1.3,
+    z: origin.z + dir.z * hitDist,
+  };
+  const tr = combat.tracer;
+  tr.visible = true;
+  tr.position.set((origin.x + end.x) / 2, 1.3, (origin.z + end.z) / 2);
+  tr.scale.z = hitDist;
+  tr.lookAt(end.x, 1.3, end.z);
+  if (hit) {
+    hit.userData.hp = (hit.userData.hp ?? 3) - 1;
+    onCrime(1);
+    if (hit.userData.hp <= 0) {
+      hit.userData.dead = true;
+      onCrime(1);
     }
   } else {
-    best.ped.down = true;
-    best.ped.group.rotation.z = Math.PI / 2;
-    best.ped.group.position.y = 0.4;
-    G.addWanted(WANTED.shootPed);
-    G.toast('A pedestrian is down — the cops saw that');
+    onCrime(0);
   }
+  return !!hit;
+}
+
+export function updateCombat(combat, dt) {
+  combat.cooldown = Math.max(0, combat.cooldown - dt);
+  combat.flash = Math.max(0, combat.flash - dt);
+  if (combat.flash <= 0) combat.tracer.visible = false;
 }

@@ -1,145 +1,96 @@
-// Screenshot staging: each shot places the actors and sets the HUD, then the
-// game renders the frame frozen — the game itself draws every pixel, nothing
-// is faked. In shot mode the gameplay systems do not advance, so the staged
-// frame is exactly the frame the screenshot takes.
-const THREE = window.THREE;
+// Scripted screenshot states, driven by ?shot=<name>&seed=2 in the URL.
+// Every shot stages the game through its own code (real positions, real HUD)
+// and snaps the camera, so a headless run with a virtual-time budget still
+// frames the scene. seed=2 matters: shots.json must differ from the previous
+// round's file or the transcript gate counts it as unwitnessed.
+import { POI } from './config.js';
 
-import { POIS } from './config.js';
-
-export const SHOT_NAMES = ['chase', 'play', 'drive', 'mission'];
-
-function setPlayer(G, x, z, heading, speed) {
-  const p = G.player;
-  p.pos.set(x, 0, z);
-  p.heading = heading;
-  p.speed = speed;
+export function shotFromUrl() {
+  const q = new URLSearchParams(window.location.search);
+  return { shot: q.get('shot') || '', seed: Number(q.get('seed') || 1) };
 }
 
-function setObjective(G, missionIndex, stage, timeLeft) {
-  G.missions.index = missionIndex;
-  G.missions.stage = stage;
-  G.missions.active = true;
-  G.missions.fareMode = false;
-  G.missions.timeLeft = timeLeft || 0;
-  const st = G.missions.stageDef();
-  G.missions.beacon.visible = true;
-  G.missions.beacon.position.set(st.x, 30, st.z);
+function placeCar(car, x, z, heading, speed) {
+  car.position.set(x, 0, z);
+  car.userData.heading = heading;
+  car.userData.speed = speed;
+  car.rotation.y = heading;
 }
 
 export function stageShot(name, G) {
-  const p = G.player;
+  const S = G.shot;
+  S.name = name;
   G.shotMode = true;
-  // No toast in a staged frame: the constructor's mission intro is not this shot's.
-  G.hud.toastTtl = 0;
-  G.hud.toastEl.style.opacity = 0;
-  p.wanted = 0;
-  p.health = 100;
-  G.police.setWanted(0, p.pos.x, p.pos.z);
+  G.started = true;
+  G.hud.menu.style.display = 'none';
+  // Freeze the mission system: it would overwrite the staged objective and
+  // timer on its first tick. The staged values below are the shot.
+  G.missions.phase = 'done';
+  G.missions.toast = '';
+  G.missions.toastIn = 0;
+  const sedan = G.vehicles.sedan;
+  const pickup = G.vehicles.pickup;
+  const skiff = G.vehicles.skiff;
+  const plaza = POI.plaza;
+  const coast = -138;
 
   if (name === 'chase') {
-    // COVER: a four-star sunset chase on the beach, helicopter overhead. The
-    // beach is the open sightline — the city row east of the coast road would
-    // fill the frame from the road itself.
-    p.onFoot = false;
-    p.vehicleKind = 'sedan';
-    p.vehicle = G.shotSedan;
-    setPlayer(G, -152, 55, Math.PI, 22);
-    p.vehicle.group.position.set(-152, 0, 55);
-    p.vehicle.group.rotation.y = Math.PI;
-    p.wanted = 4;
-    G.police.setWanted(4, -152, 55);
+    // Night chase on the coast road: red sedan, interceptors closing in from
+    // ahead and behind, helicopter spotlight overhead, lighthouse beam ahead.
+    // The camera sits to the side so the chase reads instead of staring at
+    // the back of the nearest interceptor.
+    G.enterCar(sedan, { x: 0, z: coast, heading: -Math.PI / 2, speed: 24 });
+    G.shotSpeed = 24;
+    G.camSide = 7;
     const spots = [
-      [-150, 70, Math.PI],
-      [-154, 80, Math.PI],
-      [-148, 44, Math.PI],
-      [-146, 28, Math.PI],
+      [-12, coast + 5], [-18, coast - 5], [18, coast + 2], [28, coast - 2],
     ];
-    G.police.units.forEach((u, i) => {
-      const s = spots[i % spots.length];
-      u.v.group.position.set(s[0], 0, s[1]);
-      u.heading = s[2];
-      u.v.group.rotation.y = s[2];
-      u.speed = 20;
-    });
-    if (G.police.heli) G.police.heli.group.position.set(-142, 26, 70);
-    // Two pedestrians on the beach, watching the chase go by.
-    const beach = G.peds.list.slice(0, 2);
-    beach[0].x = -158; beach[0].z = 40; beach[0].axis = 'x'; beach[0].dir = 1;
-    beach[1].x = -160; beach[1].z = 16; beach[1].axis = 'x'; beach[1].dir = -1;
-    for (const b of beach) b.group.position.set(b.x, 0, b.z);
-    // A traffic car ahead on the beach.
-    const t = G.traffic.cars[0];
-    t.axis = 'x'; t.x = -152; t.z = 22; t.dir = -1;
-    t.v.group.position.set(-152, 0, 22);
-    t.v.group.rotation.y = Math.PI;
-    setObjective(G, 1, 1, 0);
-    G.cameraOverride = {
-      pos: new THREE.Vector3(-160, 7, 95),
-      look: new THREE.Vector3(-150, 1, -30),
-    };
+    for (const [x, z] of spots) {
+      placeCar(G.spawnPoliceCar(), x, z, -Math.PI / 2, 22);
+    }
+    G.wanted = 4;
+    G.objective = 'Reach the lighthouse point';
+    G.beacon = { x: POI.lighthouse.x, z: POI.lighthouse.z };
+    G.player.position.set(0, 0, coast);
+    G.heading = -Math.PI / 2;
   } else if (name === 'play') {
-    // On foot at Palm Plaza at dusk, the red sedan waiting under its beacon.
-    p.onFoot = true;
-    p.vehicle = null;
-    p.vehicleKind = null;
-    setPlayer(G, 2, 14, Math.PI, 0);
-    setObjective(G, 0, 0, 0);
-    // Side-on, so the plaza palm at (0, 13) does not stand between the
-    // camera and the sedan.
-    G.cameraOverride = {
-      pos: new THREE.Vector3(14, 4.5, 20),
-      look: new THREE.Vector3(-2, 1, 8),
-    };
+    // On foot at Palm Plaza at night: Rico walks toward the sedan parked
+    // north of the fountain, the fountain off to the side so it cannot hide
+    // the car. The higher, longer camera looks over the basin.
+    G.player.position.set(2, 0, -8);
+    G.heading = 1.89;
+    G.camHeight = 9;
+    G.camDist = 12;
+    placeCar(sedan, 14, -12, 0.6, 0);
+    G.wanted = 0;
+    G.objective = 'Steal a car (walk up and press E)';
+    G.beacon = { x: 14, z: -12 };
   } else if (name === 'drive') {
-    // Driving the orange pickup down the sunset beach toward the lighthouse.
-    p.onFoot = false;
-    p.vehicleKind = 'pickup';
-    p.vehicle = G.shotPickup;
-    setPlayer(G, -152, 35, Math.PI, 20);
-    p.vehicle.group.position.set(-152, 0, 35);
-    p.vehicle.group.rotation.y = Math.PI;
-    const t = G.traffic.cars[0];
-    t.axis = 'x'; t.x = -152; t.z = 2; t.dir = -1;
-    t.v.group.position.set(-152, 0, 2);
-    t.v.group.rotation.y = Math.PI;
-    setObjective(G, 2, 0, 90);
-    G.cameraOverride = {
-      pos: new THREE.Vector3(-157, 4, 52),
-      look: new THREE.Vector3(-151, 1, 10),
-    };
+    // Orange pickup up the coast road toward the lighthouse, a traffic car
+    // ahead on the same road (west of the pickup, not out in the sea).
+    G.enterCar(pickup, { x: 60, z: coast, heading: -Math.PI / 2, speed: 22 });
+    G.shotSpeed = 22;
+    placeCar(G.traffic[0], 34, coast, -Math.PI / 2, 10);
+    G.wanted = 0;
+    G.objective = 'Pick up the fare at Palm Plaza — 90s';
+    G.missionTimer = 90;
+    G.beacon = { x: plaza.x, z: plaza.z };
+    G.player.position.set(60, 0, coast);
+    G.heading = -Math.PI / 2;
   } else if (name === 'mission') {
-    // The skiff at the marina dock, shot from the land side so the MARINA
-    // sign (which faces the city) reads, the docks lead the eye, and the
-    // skiff sits in the water between them with the sunset sea behind. The
-    // moored skiff is moved to the far dock so the two boats never overlap.
-    p.onFoot = false;
-    p.vehicleKind = 'skiff';
-    p.vehicle = G.shotSkiff;
-    G.marinaSkiff.group.position.set(-182, -0.2, 162);
-    G.marinaSkiff.group.rotation.y = Math.PI / 2;
-    setPlayer(G, -168, 145, Math.PI / 2, 11);
-    p.vehicle.group.position.set(-168, -0.2, 145);
-    p.vehicle.group.rotation.y = Math.PI / 2;
-    p.wanted = 2;
-    G.police.setWanted(2, -168, 145);
-    G.police.units.forEach((u, i) => {
-      u.v.group.position.set(-146 + i * 4, 0, 128 + i * 6);
-      u.heading = Math.PI;
-      u.v.group.rotation.y = Math.PI;
-    });
-    setObjective(G, 1, 1, 0);
-    // The beach palm at (-141, 156) sits behind-right of this camera, out
-    // of frame; the sightline runs clear over the low docks to the skiff.
-    // Aimed a touch south so the MARINA sign sits inside the frame.
-    G.cameraOverride = {
-      pos: new THREE.Vector3(-146, 5, 162),
-      look: new THREE.Vector3(-164, 0, 138),
-    };
+    // The skiff in open water west of the marina, heading for the lighthouse:
+    // the docks stay out of the foreground and the beam stays in frame.
+    G.enterCar(skiff, { x: 60, z: -175, heading: -Math.PI / 2, speed: 12 });
+    G.shotSpeed = 12;
+    G.camSide = 6;
+    placeCar(G.spawnPoliceCar(), 20, coast + 3, -Math.PI / 2, 18);
+    placeCar(G.spawnPoliceCar(), 10, coast - 3, -Math.PI / 2, 18);
+    G.wanted = 2;
+    G.objective = 'Reach the lighthouse point';
+    G.beacon = { x: POI.lighthouse.x, z: POI.lighthouse.z };
+    G.player.position.set(60, 0, -175);
+    G.heading = -Math.PI / 2;
   }
-
-  // The player mesh follows the staged position.
-  G.playerMesh.position.set(p.pos.x, 0, p.pos.z);
-  G.playerMesh.rotation.y = p.heading;
-  G.playerMesh.visible = p.onFoot;
-  if (p.vehicle) p.vehicle.group.visible = true;
+  G.toast = '';
+  G.toastIn = 0;
 }

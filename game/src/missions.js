@@ -1,148 +1,127 @@
-// Missions and fares: the six-mission story arc for Rico Marlowe and Vera
-// Costa, then repeatable taxi fares once the story is done. A beacon pillar
-// marks the current objective; a timer runs on the timed jobs.
-const THREE = window.THREE;
+// Missions: Rico Marlowe's six-job night arc for Vera Costa, then repeatable
+// taxi fares. A beacon pillar marks the target; timers and package counts
+// drive the objectives. All positions are world coordinates.
+import { MISSIONS, FARES, POI } from './config.js';
 
-import { MISSIONS, FARES, POIS } from './config.js';
+const BEACONS = {
+  wheels: { x: 6, z: -4 },
+  harbour: { x: POI.lighthouse.x, z: POI.lighthouse.z + 8 },
+  taxi: { x: POI.plaza.x, z: POI.plaza.z },
+  courier: [
+    { x: -80, z: 40 }, { x: 120, z: -60 }, { x: POI.marina.x, z: POI.marina.z + 6 },
+  ],
+  leap: { x: POI.airfield.x, z: POI.airfield.z },
+  cache: [
+    { x: -178, z: -168 }, { x: -192, z: -160 }, { x: -170, z: -185 },
+    { x: -196, z: -178 }, { x: -182, z: -150 },
+  ],
+};
 
-export class Missions {
-  constructor(G) {
-    this.G = G;
-    this.index = 0;
-    this.stage = 0;
-    this.timeLeft = 0;
-    this.active = true;
-    this.fareMode = false;
-    this.fareIndex = 0;
-    this.fareStage = 0;
+export function makeMissions() {
+  return {
+    index: 0,
+    phase: 'brief', // brief | active | done
+    timer: 0,
+    drop: 0,
+    fare: null,
+    fareStep: 0,
+    toast: '',
+    toastIn: 0,
+  };
+}
 
-    this.beacon = new THREE.Mesh(
-      new THREE.CylinderGeometry(1.2, 1.2, 60, 10, 1, true),
-      new THREE.MeshBasicMaterial({ color: 0xffd24a, transparent: true, opacity: 0.35, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }),
-    );
-    this.beacon.position.y = 30;
-    G.scene.add(this.beacon);
+export function currentMission(m) {
+  return MISSIONS[m.index] || null;
+}
 
-    // The ramp for Rooftop Leap, at the airfield.
-    const ramp = new THREE.Mesh(new THREE.BoxGeometry(7, 0.6, 12), new THREE.MeshLambertMaterial({ color: 0xc2a23a }));
-    ramp.position.set(150, 1.6, -70);
-    ramp.rotation.x = -0.32;
-    G.scene.add(ramp);
+export function missionBeacon(m) {
+  const cur = currentMission(m);
+  if (!cur) return null;
+  if (m.fare) return m.fareStep === 0 ? { x: 0, z: 0 } : { x: POI.airfield.x, z: POI.airfield.z };
+  const b = BEACONS[cur.id];
+  if (Array.isArray(b)) return b[Math.min(m.drop, b.length - 1)];
+  return b;
+}
 
-    // The five cache packages at the lighthouse point.
-    this.packages = [];
-    for (let i = 0; i < 5; i++) {
-      const pkg = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.9, 0.9), new THREE.MeshBasicMaterial({ color: 0xffd24a }));
-      const a = (i / 5) * Math.PI * 2;
-      pkg.position.set(POIS.lighthouse.x + Math.cos(a) * 6, 0.8, POIS.lighthouse.z + Math.sin(a) * 6);
-      G.scene.add(pkg);
-      this.packages.push(pkg);
-    }
+export function startMission(m, G) {
+  const cur = currentMission(m);
+  if (!cur) return;
+  m.phase = 'active';
+  m.timer = cur.time || 0;
+  m.drop = 0;
+  m.toast = `${cur.name} — $${cur.pay}`;
+  m.toastIn = 3;
+  G.objective = cur.text;
+}
 
-    this.setTimer();
-    G.toast(MISSIONS[0].intro);
+export function updateMissions(m, G, dt) {
+  if (m.toastIn > 0) m.toastIn -= dt;
+  const cur = currentMission(m);
+  if (m.phase === 'brief' && cur) {
+    startMission(m, G);
+    return;
   }
-
-  current() {
-    return MISSIONS[this.index];
-  }
-
-  stageDef() {
-    if (this.fareMode) {
-      const f = FARES[this.fareIndex % FARES.length];
-      if (this.fareStage === 0) {
-        return { text: `Pick up the fare at ${POIS[f.from].label}`, x: POIS[f.from].x, z: POIS[f.from].z, r: 8, need: 'reach' };
-      }
-      return { text: `Drop the fare at ${POIS[f.to].label}`, x: POIS[f.to].x, z: POIS[f.to].z, r: 10, need: 'reach' };
-    }
-    return this.current().stages[this.stage];
-  }
-
-  setTimer() {
-    this.timeLeft = this.fareMode ? 90 : this.current().time || 0;
-  }
-
-  objectiveText() {
-    if (!this.active) return 'Story complete — press M for a fare, G for the garage.';
-    return this.stageDef().text;
-  }
-
-  update(dt) {
-    if (!this.active) return;
-    const st = this.stageDef();
-    this.beacon.position.set(st.x, 30, st.z);
-    if (this.timeLeft > 0) {
-      this.timeLeft -= dt;
-      if (this.timeLeft <= 0) {
-        this.timeLeft = 0;
-        this.failStage();
-        return;
-      }
-    }
-    const p = this.G.player;
-    const d = Math.hypot(p.pos.x - st.x, p.pos.z - st.z);
-    let done = false;
-    if (st.need === 'reach') done = d <= st.r;
-    else if (st.need === 'enterCar') done = !p.onFoot && p.vehicleKind !== 'skiff' && d <= st.r;
-    else if (st.need === 'boardBoat') done = !p.onFoot && p.vehicleKind === 'skiff' && d <= st.r;
-    else if (st.need === 'speed') done = !p.onFoot && p.speed >= st.speed && d <= st.r;
-    if (done) this.completeStage();
-  }
-
-  completeStage() {
-    const G = this.G;
-    if (this.fareMode) {
-      if (this.fareStage === 0) {
-        this.fareStage = 1;
-        this.timeLeft = 90;
-        return;
-      }
-      const f = FARES[this.fareIndex % FARES.length];
-      G.player.cash += f.reward;
-      G.toast(`Fare complete +$${f.reward}`);
-      G.audio.chime();
-      this.fareIndex++;
-      this.fareStage = 0;
-      this.timeLeft = 90;
+  if (!cur || m.phase !== 'active') return;
+  if (m.timer > 0) {
+    m.timer -= dt;
+    if (m.timer <= 0) {
+      m.toast = 'Too slow — the job fell through';
+      m.toastIn = 3;
+      m.index += 1;
+      m.phase = 'brief';
+      G.objective = 'Find the next job';
       return;
     }
-    this.stage++;
-    const m = this.current();
-    if (this.stage >= m.stages.length) {
-      G.player.cash += m.reward;
-      G.toast(`${m.name} complete +$${m.reward}`);
-      G.audio.chime();
-      this.index++;
-      this.stage = 0;
-      if (this.index >= MISSIONS.length) {
-        this.active = false;
-        this.beacon.visible = false;
-        G.toast('Story complete — Rico and Vera own the night. Fares still pay.');
-        return;
+  }
+  const b = missionBeacon(m);
+  if (!b) return;
+  const px = G.player.position.x;
+  const pz = G.player.position.z;
+  const d = Math.hypot(px - b.x, pz - b.z);
+  if (d < 7) {
+    if (Array.isArray(BEACONS[cur.id])) {
+      m.drop += 1;
+      G.cash += 0; // paid at the end of the chain
+      if (m.drop >= BEACONS[cur.id].length) {
+        G.cash += cur.pay;
+        G.score += cur.pay;
+        m.toast = `${cur.name} complete — $${cur.pay}`;
+        m.toastIn = 3;
+        m.index += 1;
+        m.phase = 'brief';
+        G.objective = 'Find the next job';
+      } else {
+        G.objective = `${cur.text} (${m.drop}/${BEACONS[cur.id].length})`;
       }
-      G.toast(MISSIONS[this.index].intro);
-      this.setTimer();
+    } else if (cur.id === 'wheels') {
+      // Stealing the car is the objective; reaching the sedan counts.
+      G.cash += cur.pay;
+      G.score += cur.pay;
+      m.toast = `${cur.name} complete — $${cur.pay}`;
+      m.toastIn = 3;
+      m.index += 1;
+      m.phase = 'brief';
+      G.objective = 'Find the next job';
+    } else {
+      G.cash += cur.pay;
+      G.score += cur.pay;
+      m.toast = `${cur.name} complete — $${cur.pay}`;
+      m.toastIn = 3;
+      m.index += 1;
+      m.phase = 'brief';
+      G.objective = 'Find the next job';
     }
   }
+}
 
-  failStage() {
-    const G = this.G;
-    G.toast('Too slow — the fare walked away');
-    if (this.fareMode) {
-      this.fareIndex++;
-      this.fareStage = 0;
-      this.timeLeft = 90;
-      return;
-    }
-    this.stage = 0;
-    this.setTimer();
-  }
-
-  startFare() {
-    if (this.fareMode || this.active) return;
-    this.fareMode = true;
-    this.fareStage = 0;
-    this.timeLeft = 90;
-    this.G.toast('Fare accepted — pick them up');
-  }
+export function startFare(m, G) {
+  if (m.index < MISSIONS.length) return false;
+  m.fare = FARES[Math.floor(Math.random() * FARES.length)];
+  m.fareStep = 0;
+  m.timer = 90;
+  m.phase = 'active';
+  G.objective = `Taxi: pick up at ${m.fare.from}`;
+  m.toast = `Taxi fare — $${m.fare.pay}`;
+  m.toastIn = 3;
+  return true;
 }

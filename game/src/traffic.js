@@ -1,53 +1,52 @@
-// Ambient traffic: cars cruising the street grid, wrapping at the city edge.
-// They are scenery with a job — they make the screenshots read as a living city.
-const THREE = window.THREE;
+// Traffic: cars cruising the street grid at night, headlights on, slowing
+// near the player so the roads feel alive without pile-ups.
+import { makeVehicle } from './cars.js';
+import { mulberry32, pick, range } from './rng.js';
 
-import { STREETS_X, STREETS_Z } from './config.js';
-import { makeVehicle, spinWheels } from './cars.js';
+const STREETS_X = [-160, -120, -80, -40, 0, 40, 80, 120, 160];
+const STREETS_Z = [-100, -60, -20, 20, 60, 100, 140];
 
-const PAINT = [0x3a6ac2, 0xc2a23a, 0x7a3a8a, 0x3a8a5a, 0x8a8a8a, 0xc25a2a];
-
-export class Traffic {
-  constructor(scene, rng, count = 10) {
-    this.cars = [];
-    for (let i = 0; i < count; i++) {
-      const kind = rng.pick(['sedan', 'pickup', 'sedan', 'pickup', 'bike']);
-      const v = makeVehicle(kind, rng.pick(PAINT));
-      const axis = rng.chance(0.5) ? 'x' : 'z';
-      const dir = rng.chance(0.5) ? 1 : -1;
-      const car = { v, axis, dir, speed: rng.range(8, 14), x: 0, z: 0 };
-      if (axis === 'x') {
-        car.x = rng.pick(STREETS_X) + (dir > 0 ? 2 : -2);
-        car.z = rng.range(-190, 190);
-      } else {
-        car.x = rng.range(-130, 130);
-        car.z = rng.pick(STREETS_Z) + (dir > 0 ? 2 : -2);
-      }
-      v.group.position.set(car.x, 0, car.z);
-      scene.add(v.group);
-      this.cars.push(car);
-    }
+export function makeTraffic(scene, count) {
+  const rng = mulberry32(777);
+  const colors = [0x5a6b8a, 0x8a5a3c, 0x3c6b4a, 0x6b3c5a, 0x777777, 0x2a4a6b];
+  const cars = [];
+  for (let i = 0; i < count; i++) {
+    const car = makeVehicle('sedan', pick(rng, colors));
+    const onX = rng() < 0.5;
+    const street = onX ? pick(rng, STREETS_X) : pick(rng, STREETS_Z);
+    const along = range(rng, -140, 140);
+    car.position.set(onX ? street + (rng() < 0.5 ? -2 : 2) : along, 0, onX ? along : street + (rng() < 0.5 ? -2 : 2));
+    car.userData.speed = range(rng, 7, 12);
+    car.userData.heading = onX ? (rng() < 0.5 ? 0 : Math.PI) : (rng() < 0.5 ? Math.PI / 2 : -Math.PI / 2);
+    car.userData.axis = onX ? 'z' : 'x';
+    car.userData.street = street;
+    car.userData.dir = car.userData.heading === 0 || car.userData.heading === Math.PI / 2 ? 1 : -1;
+    scene.add(car);
+    cars.push(car);
   }
+  return cars;
+}
 
-  update(dt) {
-    for (const c of this.cars) {
-      if (c.axis === 'x') {
-        c.z += c.dir * c.speed * dt;
-        if (c.z > 195) c.z = -195;
-        if (c.z < -195) c.z = 195;
-        c.v.group.rotation.y = c.dir > 0 ? 0 : Math.PI;
-      } else {
-        c.x += c.dir * c.speed * dt;
-        if (c.x > 135) c.x = -135;
-        if (c.x < -135) c.x = 135;
-        c.v.group.rotation.y = c.dir > 0 ? Math.PI / 2 : -Math.PI / 2;
-      }
-      c.v.group.position.set(c.x, 0, c.z);
-      spinWheels(c.v, dt, c.speed);
+export function updateTraffic(cars, dt, playerPos) {
+  for (const car of cars) {
+    // Slow down when the player is right ahead.
+    const dx = playerPos.x - car.position.x;
+    const dz = playerPos.z - car.position.z;
+    const dist = Math.hypot(dx, dz);
+    const want = dist < 14 ? 3 : car.userData.cruise || 10;
+    car.userData.cruise = car.userData.cruise || 10;
+    const speed = Math.min(car.userData.cruise, want + (dist >= 14 ? 8 : 0));
+    const step = speed * dt * car.userData.dir;
+    if (car.userData.axis === 'z') {
+      car.position.z += step;
+      if (car.position.z > 150) car.position.z = -150;
+      if (car.position.z < -150) car.position.z = 150;
+    } else {
+      car.position.x += step;
+      if (car.position.x > 170) car.position.x = -170;
+      if (car.position.x < -170) car.position.x = 170;
     }
-  }
-
-  positions() {
-    return this.cars.map((c) => ({ x: c.x, z: c.z }));
+    car.rotation.y = car.userData.heading;
+    for (const w of car.userData.wheels) w.rotation.x += speed * dt * 2;
   }
 }

@@ -1,8 +1,8 @@
-// Seeded random numbers (mulberry32) so the city, traffic and peds are the same
-// on every load for a given seed. Deterministic builds need deterministic games.
+// Seeded random helpers for Solmar Bay (night build). One small deterministic
+// source so the city layout is the same on every load.
 export function mulberry32(seed) {
   let a = seed >>> 0;
-  return function next() {
+  return function () {
     a |= 0;
     a = (a + 0x6d2b79f5) | 0;
     let t = Math.imul(a ^ (a >>> 15), 1 | a);
@@ -11,21 +11,14 @@ export function mulberry32(seed) {
   };
 }
 
-export function makeRng(seed) {
-  const next = mulberry32(seed);
-  return {
-    next,
-    range(a, b) {
-      return a + (b - a) * next();
-    },
-    int(a, b) {
-      return Math.floor(a + (b - a + 1) * next());
-    },
-    pick(list) {
-      return list[Math.floor(next() * list.length)];
-    },
-    chance(p) {
-      return next() < p;
-    },
-  };
+export function range(rng, a, b) {
+  return a + rng() * (b - a);
+}
+
+export function pick(rng, arr) {
+  return arr[Math.floor(rng() * arr.length)];
+}
+
+export function int(rng, a, b) {
+  return a + Math.floor(rng() * (b - a + 1));
 }

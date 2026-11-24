@@ -1,70 +1,70 @@
-// Pedestrians: walkers on the sidewalks, wandering the grid, bobbing as they go.
-// They make the city feel inhabited and give the chase shots foreground life.
-const THREE = window.THREE;
+// Pedestrians: night crowds on the sidewalks, a few standing at the plaza,
+// scattering when a shot goes off nearby.
+import { mulberry32, pick, range } from './rng.js';
 
-import { STREETS_X, STREETS_Z } from './config.js';
+const SHIRTS = [0xc94f4f, 0x4f7dc9, 0x4fc97d, 0xc9a44f, 0x9a4fc9, 0xdddddd, 0x4fc9c2];
 
-const SHIRTS = [0xc25a5a, 0x5a8ac2, 0x8ac25a, 0xc2a23a, 0x8a5a8a, 0xe8e4da, 0x3a3a44];
-
-export class Peds {
-  constructor(scene, rng, count = 18) {
-    this.list = [];
-    for (let i = 0; i < count; i++) {
-      const group = new THREE.Group();
-      const shirt = rng.pick(SHIRTS);
-      const body = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.38, 1.1, 8), new THREE.MeshLambertMaterial({ color: shirt }));
-      body.position.y = 0.95;
-      group.add(body);
-      const head = new THREE.Mesh(new THREE.SphereGeometry(0.27, 10, 8), new THREE.MeshLambertMaterial({ color: 0xd9a986 }));
-      head.position.y = 1.72;
-      group.add(head);
-      const legs = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.7, 0.3), new THREE.MeshLambertMaterial({ color: 0x2a2a33 }));
-      legs.position.y = 0.35;
-      group.add(legs);
-      const shadow = new THREE.Mesh(
-        new THREE.CircleGeometry(0.55, 12),
-        new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.3 }),
-      );
-      shadow.rotation.x = -Math.PI / 2;
-      shadow.position.y = 0.02;
-      group.add(shadow);
-
-      const axis = rng.chance(0.5) ? 'x' : 'z';
-      const dir = rng.chance(0.5) ? 1 : -1;
-      const ped = {
-        group, body, axis, dir,
-        speed: rng.range(1, 2.2),
-        x: 0, z: 0, phase: rng.range(0, Math.PI * 2),
-      };
-      if (axis === 'x') {
-        ped.x = rng.pick(STREETS_X) + (dir > 0 ? 5.5 : -5.5);
-        ped.z = rng.range(-190, 190);
-      } else {
-        ped.x = rng.range(-130, 130);
-        ped.z = rng.pick(STREETS_Z) + (dir > 0 ? 5.5 : -5.5);
-      }
-      group.position.set(ped.x, 0, ped.z);
-      scene.add(group);
-      this.list.push(ped);
-    }
+export function makePeds(scene, count) {
+  const rng = mulberry32(4242);
+  const peds = [];
+  for (let i = 0; i < count; i++) {
+    const g = new THREE.Group();
+    const shirt = new THREE.MeshLambertMaterial({
+      color: pick(rng, SHIRTS), emissive: pick(rng, SHIRTS), emissiveIntensity: 0.25,
+    });
+    const skin = new THREE.MeshLambertMaterial({ color: 0xc9a184 });
+    const legs = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.8, 0.28),
+      new THREE.MeshLambertMaterial({ color: 0x1a1d26 }));
+    legs.position.y = 0.4;
+    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.65, 0.32), shirt);
+    torso.position.y = 1.1;
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.24, 10, 8), skin);
+    head.position.y = 1.65;
+    g.add(legs, torso, head);
+    const onStreet = rng() < 0.5;
+    g.position.set(
+      onStreet ? range(rng, -170, 170) : range(rng, -170, 170),
+      0,
+      range(rng, -120, 150),
+    );
+    g.userData = {
+      speed: range(rng, 0.8, 1.6),
+      heading: range(rng, 0, Math.PI * 2),
+      changeIn: range(rng, 3, 9),
+      flee: 0,
+    };
+    scene.add(g);
+    peds.push(g);
   }
+  return peds;
+}
 
-  update(dt, t) {
-    for (const p of this.list) {
-      if (p.axis === 'x') {
-        p.z += p.dir * p.speed * dt;
-        if (p.z > 195 || p.z < -195) p.dir *= -1;
-        p.group.rotation.y = p.dir > 0 ? 0 : Math.PI;
-      } else {
-        p.x += p.dir * p.speed * dt;
-        if (p.x > 135 || p.x < -135) p.dir *= -1;
-        p.group.rotation.y = p.dir > 0 ? Math.PI / 2 : -Math.PI / 2;
-      }
-      p.group.position.set(p.x, Math.abs(Math.sin(t * 4 + p.phase)) * 0.06, p.z);
+export function updatePeds(peds, dt, dangerPos) {
+  for (const p of peds) {
+    const u = p.userData;
+    u.changeIn -= dt;
+    if (dangerPos && Math.hypot(p.position.x - dangerPos.x, p.position.z - dangerPos.z) < 18) {
+      u.flee = 2.5;
     }
-  }
-
-  positions() {
-    return this.list.map((p) => ({ x: p.x, z: p.z }));
+    if (u.flee > 0) {
+      u.flee -= dt;
+      const away = Math.atan2(p.position.x - dangerPos.x, p.position.z - dangerPos.z);
+      p.position.x += Math.sin(away) * 3.2 * dt;
+      p.position.z += Math.cos(away) * 3.2 * dt;
+      p.rotation.y = away;
+      continue;
+    }
+    if (u.changeIn <= 0) {
+      u.heading = Math.random() * Math.PI * 2;
+      u.changeIn = 3 + Math.random() * 6;
+    }
+    p.position.x += Math.sin(u.heading) * u.speed * dt;
+    p.position.z += Math.cos(u.heading) * u.speed * dt;
+    if (p.position.x < -175) p.position.x = -175;
+    if (p.position.x > 175) p.position.x = 175;
+    if (p.position.z < -125) p.position.z = -125;
+    if (p.position.z > 175) p.position.z = 175;
+    p.rotation.y = u.heading;
+    p.position.y = Math.abs(Math.sin(performance.now() / 300 + u.speed * 10)) * 0.05;
   }
 }
