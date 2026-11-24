@@ -1,91 +1,76 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Solmar Bay — an open-world crime game</title>
 <style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #0e1a2e; font-family: Arial, Helvetica, sans-serif; }
-  #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
-  #status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-  .panel { position: absolute; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.8); z-index: 5; }
+  html, body { margin: 0; padding: 0; overflow: hidden; background: #0a1420; font-family: Arial, Helvetica, sans-serif; }
+  #game { position: fixed; inset: 0; }
+  #game canvas { display: block; }
+  .hud { position: fixed; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.7); pointer-events: none; z-index: 5; }
   #stars { top: 12px; left: 14px; font-size: 26px; letter-spacing: 2px; color: #ffd21f; }
-  #cashbox { top: 12px; right: 14px; text-align: right; font-size: 20px; font-weight: bold; }
-  #healthbar { width: 180px; height: 12px; background: rgba(0,0,0,.55); border: 1px solid #fff; margin-top: 4px; }
-  #health-fill { height: 100%; width: 100%; background: #37c24a; }
-  #health-text { font-size: 13px; }
-  #minimap { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); width: 180px; height: 180px; border: 2px solid rgba(255,255,255,.7); background: #2e7f9e; z-index: 5; }
-  #speed { right: 16px; bottom: 16px; font-size: 26px; font-weight: bold; }
-  #objective { left: 50%; bottom: 18px; transform: translateX(-50%); font-size: 17px; font-weight: bold; background: rgba(0,0,0,.55); padding: 8px 14px; border-radius: 6px; max-width: 60%; text-align: center; }
-  #prompt { left: 50%; bottom: 64px; transform: translateX(-50%); font-size: 14px; background: rgba(0,0,0,.45); padding: 5px 10px; border-radius: 4px; }
-  #messages { left: 50%; top: 64px; transform: translateX(-50%); width: 640px; max-width: 80%; text-align: center; }
-  .toast { background: rgba(0,0,0,.6); padding: 7px 12px; border-radius: 6px; margin-bottom: 6px; font-size: 15px; }
-  #compass { left: 50%; top: 12px; transform: translateX(-50%); width: 360px; height: 22px; overflow: hidden; background: rgba(0,0,0,.45); border-radius: 4px; }
-  #compass-strip { position: absolute; white-space: nowrap; font-size: 14px; letter-spacing: 18px; line-height: 22px; padding-left: 0; }
-  #compass-beacon { position: absolute; top: 0; color: #ffd21f; font-size: 16px; display: none; }
-  .overlay { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 10; color: #fff; text-align: center; background: linear-gradient(180deg, rgba(14,26,46,.82), rgba(242,166,90,.55)); }
-  .overlay h1 { font-size: 64px; margin: 0; letter-spacing: 6px; text-shadow: 0 3px 12px rgba(0,0,0,.7); }
-  .overlay h2 { font-size: 22px; margin: 8px 0 4px; font-weight: normal; }
-  .overlay p { max-width: 620px; font-size: 16px; line-height: 1.5; margin: 10px 20px; }
-  .overlay button { font-size: 18px; padding: 12px 28px; margin: 8px; border: none; border-radius: 8px; background: #ffd21f; color: #1a1a1a; font-weight: bold; cursor: pointer; }
-  .overlay button:hover { background: #ffe45a; }
-  .controls { font-size: 14px; line-height: 1.9; background: rgba(0,0,0,.45); padding: 10px 22px; border-radius: 8px; margin: 10px; }
-  #pause-menu, #busted-screen, #garage-menu { display: none; }
-  #menu { display: flex; }
-  .garage-row { margin: 6px; font-size: 16px; }
+  #compass { top: 12px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,.45); padding: 6px 14px; border-radius: 6px; font-size: 14px; letter-spacing: 1px; }
+  #cash { top: 12px; right: 16px; font-size: 22px; font-weight: bold; text-align: right; }
+  #hpwrap { top: 44px; right: 16px; width: 180px; height: 10px; background: rgba(0,0,0,.5); border-radius: 5px; overflow: hidden; }
+  #hpbar { height: 100%; width: 66%; background: #3ad86a; }
+  #speed { bottom: 16px; right: 18px; font-size: 22px; font-weight: bold; }
+  #objective { bottom: 64px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,.55); padding: 8px 18px; border-radius: 6px; font-size: 15px; white-space: nowrap; }
+  #hint { bottom: 16px; left: 16px; font-size: 13px; background: rgba(0,0,0,.45); padding: 6px 10px; border-radius: 6px; }
+  /* The minimap is vertically centred on the left edge: bottom-anchoring it
+     renders as a dark hole under headless compositors, so it stays centred. */
+  #minimap { position: fixed; left: 12px; top: 50%; transform: translateY(-50%); width: 160px; height: 160px; border: 2px solid rgba(255,255,255,.7); border-radius: 4px; z-index: 5; background: #7fae56; }
+  #banner { top: 22%; left: 50%; transform: translateX(-50%) scale(.95); text-align: center; opacity: 0; transition: opacity .25s; }
+  #banner.show { opacity: 1; }
+  #banner-title { font-size: 34px; font-weight: bold; }
+  #banner-sub { font-size: 16px; margin-top: 4px; }
+  #toast { bottom: 110px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,.6); padding: 7px 16px; border-radius: 6px; font-size: 14px; opacity: 0; transition: opacity .25s; }
+  #toast.show { opacity: 1; }
+  .overlay { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; flex-direction: column; background: rgba(6,18,32,.82); color: #fff; z-index: 10; text-align: center; pointer-events: auto; }
+  .overlay.show { display: flex; }
+  .overlay h1 { font-size: 52px; margin: 0 0 8px; letter-spacing: 2px; }
+  .overlay p { max-width: 560px; font-size: 16px; line-height: 1.5; margin: 6px 0; }
+  .overlay button { pointer-events: auto; font-size: 20px; padding: 12px 34px; margin: 10px 6px 0; border: 0; border-radius: 8px; background: #e8a83a; color: #1a1a1a; font-weight: bold; cursor: pointer; }
+  .overlay button:hover { background: #ffd21f; }
+  .overlay .keys { font-size: 14px; color: #cfe3f2; }
+  #status { position: fixed; left: -9999px; }
 </style>
 </head>
 <body>
-<canvas id="game" aria-label="Solmar Bay: an open-world crime game. Drive, run jobs for Vera Costa, and stay ahead of the Solmar PD."></canvas>
-<p id="status" role="status" aria-live="polite"></p>
-
-<div id="stars" class="panel">☆☆☆☆☆</div>
-<div id="cashbox" class="panel"><span id="cash">$0</span><div id="healthbar"><div id="health-fill"></div></div><span id="health-text">100</span></div>
-<div id="compass" class="panel"><div id="compass-strip">N&nbsp;&nbsp;NE&nbsp;&nbsp;E&nbsp;&nbsp;SE&nbsp;&nbsp;S&nbsp;&nbsp;SW&nbsp;&nbsp;W&nbsp;&nbsp;NW&nbsp;&nbsp;N&nbsp;&nbsp;NE&nbsp;&nbsp;E&nbsp;&nbsp;SE&nbsp;&nbsp;S&nbsp;&nbsp;SW&nbsp;&nbsp;W&nbsp;&nbsp;NW&nbsp;&nbsp;</div><div id="compass-beacon">▼</div></div>
-<div id="messages" class="panel"></div>
-<canvas id="minimap" width="180" height="180"></canvas>
-<div id="speed" class="panel"></div>
-<div id="prompt" class="panel"></div>
-<div id="objective" class="panel">Welcome to Solmar Bay</div>
-
-<div id="menu" class="overlay">
+<div id="game"></div>
+<div class="hud" id="stars">☆☆☆☆☆</div>
+<div class="hud" id="compass">N NE E SE S SW W NW · N</div>
+<div class="hud" id="cash">$0</div>
+<div class="hud" id="hpwrap"><div id="hpbar"></div></div>
+<div class="hud" id="speed"></div>
+<div class="hud" id="objective">Welcome to Solmar Bay</div>
+<div class="hud" id="hint">WASD move/drive · E enter car · Click shoot · M job · G garage · P pause</div>
+<canvas id="minimap" width="160" height="160"></canvas>
+<div class="hud" id="banner"><div id="banner-title"></div><div id="banner-sub"></div></div>
+<div class="hud" id="toast"></div>
+<div class="overlay show" id="menu">
   <h1>SOLMAR BAY</h1>
-  <h2>An open-world crime game</h2>
-  <p>You are Rico Marlowe, new in town and already in debt. Vera Costa has jobs — cars to steal, fares to run, a boat to lose the cops in. Earn cash, fix up your ride at the garage, and don&rsquo;t get busted.</p>
-  <div class="controls">
-    WASD move / drive &nbsp;·&nbsp; Shift sprint &nbsp;·&nbsp; Space jump / brake<br>
-    E enter or leave a car &nbsp;·&nbsp; Mouse click shoot (on foot) &nbsp;·&nbsp; Drag mouse to look &nbsp;·&nbsp; P pause
-  </div>
-  <div>
-    <button id="start-btn">Start new game</button>
-    <button id="continue-btn" style="display:none">Continue</button>
-  </div>
+  <p>An original open-world crime game. Rico Marlowe, driver for hire, runs jobs for Vera Costa across a sun-soaked coastal city: steal cars, outrun the Solmar PD, and spend the pay at Rico's Garage.</p>
+  <p class="keys">WASD move and drive · E enter or leave a car · Click to shoot · M start a job · G open the garage near it · P pause · Progress saves in your browser.</p>
+  <button id="start-btn">Start driving</button>
 </div>
-
-<div id="pause-menu" class="overlay">
-  <h1>PAUSED</h1>
-  <p>Solmar Bay waits for no one. Well — right now it does.</p>
-  <button id="resume-btn">Resume</button>
+<div class="overlay" id="pause">
+  <h1>Paused</h1>
+  <p>Press P to keep driving.</p>
 </div>
-
-<div id="busted-screen" class="overlay">
+<div class="overlay" id="garage">
+  <h1>RICO'S GARAGE</h1>
+  <p>Cash: <span id="garage-cash">$0</span></p>
+  <button data-upgrade="repair">Repair — $50</button>
+  <button data-upgrade="engine">Engine tune (+25% speed) — $400</button>
+  <button data-upgrade="armor">Armor plating (+50 HP) — $300</button>
+  <button id="garage-close">Close</button>
+</div>
+<div class="overlay" id="busted">
   <h1>BUSTED</h1>
-  <p id="busted-fine">The Solmar PD took $0 off you.</p>
-  <button id="respawn-btn">Back on the streets</button>
+  <p id="busted-text"></p>
 </div>
-
-<div id="garage-menu" class="overlay">
-  <h1>RICO&rsquo;S GARAGE</h1>
-  <p id="garage-cash">Cash: $0</p>
-  <p id="garage-damage">Damage: 0%</p>
-  <div>
-    <button id="garage-repair">Repair ($50)</button>
-    <button id="garage-engine">Engine upgrade ($400)</button>
-    <button id="garage-armor">Armor ($300)</button>
-  </div>
-  <button id="garage-close">Back to the street</button>
-</div>
-
+<div id="status">loading</div>
 <script src="./vendor/three.min.js"></script>
 <script type="module" src="./src/main.js"></script>
 </body>
