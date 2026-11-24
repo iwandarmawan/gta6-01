@@ -1,161 +1,148 @@
-// Missions: Rico's story, one job at a time, and the repeatable taxi fares
-// after it. A mission is a list of steps; each step names a place and what
-// reaching it means — steal, board, pick up, drop off, collect or just get
-// there. A tall yellow beacon marks the current step in the world, and the
-// HUD shows its words. Finish the step list and the reward is paid.
-import { MISSIONS, FARES, WANTED } from './config.js';
-import { addWanted } from './combat.js';
-
+// Missions and fares: the six-mission story arc for Rico Marlowe and Vera
+// Costa, then repeatable taxi fares once the story is done. A beacon pillar
+// marks the current objective; a timer runs on the timed jobs.
 const THREE = window.THREE;
 
-export function makeMissions(scene) {
-  const beacon = new THREE.Mesh(
-    new THREE.CylinderGeometry(1.2, 1.2, 60, 10, 1, true),
-    new THREE.MeshBasicMaterial({ color: 0xffeb3b, transparent: true, opacity: 0.45, side: THREE.DoubleSide }),
-  );
-  beacon.visible = false;
-  scene.add(beacon);
-  const marker = new THREE.Mesh(
-    new THREE.CylinderGeometry(3, 3, 0.3, 16),
-    new THREE.MeshBasicMaterial({ color: 0xffeb3b, transparent: true, opacity: 0.6 }),
-  );
-  marker.visible = false;
-  scene.add(marker);
-  return {
-    index: 0, step: 0, active: null, fare: null, fareStep: 0,
-    timer: 0, beacon, marker,
-    done: [],
-  };
-}
+import { MISSIONS, FARES, POIS } from './config.js';
 
-// The mission the player is on now, or null when the story is done.
-export function currentMission(M) {
-  return M.index < MISSIONS.length ? MISSIONS[M.index] : null;
-}
+export class Missions {
+  constructor(G) {
+    this.G = G;
+    this.index = 0;
+    this.stage = 0;
+    this.timeLeft = 0;
+    this.active = true;
+    this.fareMode = false;
+    this.fareIndex = 0;
+    this.fareStage = 0;
 
-// Start (or restart) the current story mission: show its first step.
-export function startMission(G) {
-  const M = G.missions;
-  const mission = currentMission(M);
-  if (!mission) return;
-  M.active = mission;
-  M.step = 0;
-  M.timer = mission.time;
-  showStep(G);
-  G.hud.banner(`${mission.name} — $${mission.reward}`, mission.intro);
-  if (mission.id === 'harbour') addWanted(G, WANTED.harbourStart);
-}
+    this.beacon = new THREE.Mesh(
+      new THREE.CylinderGeometry(1.2, 1.2, 60, 10, 1, true),
+      new THREE.MeshBasicMaterial({ color: 0xffd24a, transparent: true, opacity: 0.35, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }),
+    );
+    this.beacon.position.y = 30;
+    G.scene.add(this.beacon);
 
-// Show the current step: its words on the HUD, its beacon in the world.
-function showStep(G) {
-  const M = G.missions;
-  const mission = M.active;
-  if (!mission) return;
-  const step = mission.steps[M.step];
-  G.hud.setObjective(step.text, M.timer > 0 ? M.timer : 0);
-  M.beacon.position.set(step.target.x, 30, step.target.z);
-  M.beacon.visible = true;
-  M.marker.position.set(step.target.x, 0.2, step.target.z);
-  M.marker.visible = true;
-}
+    // The ramp for Rooftop Leap, at the airfield.
+    const ramp = new THREE.Mesh(new THREE.BoxGeometry(7, 0.6, 12), new THREE.MeshLambertMaterial({ color: 0xc2a23a }));
+    ramp.position.set(150, 1.6, -70);
+    ramp.rotation.x = -0.32;
+    G.scene.add(ramp);
 
-// Start a repeatable taxi fare: pick up here, drop off there, get paid.
-export function startFare(G) {
-  const M = G.missions;
-  if (M.active || M.fare) return false;
-  const fare = FARES[G.fareIndex % FARES.length];
-  G.fareIndex++;
-  M.fare = fare;
-  M.fareStep = 0;
-  G.hud.setObjective(`Pick up the fare at ${fare.fromName}`, 0);
-  G.hud.banner('Taxi fare', `Pick up at ${fare.fromName}, drop at ${fare.toName} — $${fare.reward}`);
-  M.beacon.position.set(fare.from.x, 30, fare.from.z);
-  M.beacon.visible = true;
-  M.marker.position.set(fare.from.x, 0.2, fare.from.z);
-  M.marker.visible = true;
-  return true;
-}
-
-// Advance the story or the fare when the player reaches a step's place.
-// Returns 'step' | 'done' | 'none'.
-export function checkStep(G, px, pz) {
-  const M = G.missions;
-  if (M.active) {
-    const step = M.active.steps[M.step];
-    const d = Math.hypot(px - step.target.x, pz - step.target.z);
-    if (d > step.radius) return 'none';
-    // Some steps need more than arriving: stealing needs a car nearby.
-    if (step.kind === 'steal' && !G.vehicle) return 'none';
-    if (step.kind === 'boardBoat' && (!G.vehicle || G.vehicle.kind !== 'boat')) return 'none';
-    G.audio.blip(990);
-    M.step++;
-    if (M.step >= M.active.steps.length) {
-      completeMission(G);
-      return 'done';
+    // The five cache packages at the lighthouse point.
+    this.packages = [];
+    for (let i = 0; i < 5; i++) {
+      const pkg = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.9, 0.9), new THREE.MeshBasicMaterial({ color: 0xffd24a }));
+      const a = (i / 5) * Math.PI * 2;
+      pkg.position.set(POIS.lighthouse.x + Math.cos(a) * 6, 0.8, POIS.lighthouse.z + Math.sin(a) * 6);
+      G.scene.add(pkg);
+      this.packages.push(pkg);
     }
-    showStep(G);
-    return 'step';
+
+    this.setTimer();
+    G.toast(MISSIONS[0].intro);
   }
-  if (M.fare) {
-    const target = M.fareStep === 0 ? M.fare.from : M.fare.to;
-    const d = Math.hypot(px - target.x, pz - target.z);
-    if (d > 9) return 'none';
-    G.audio.blip(990);
-    if (M.fareStep === 0) {
-      M.fareStep = 1;
-      G.hud.setObjective(`Drop the fare at ${M.fare.toName}`, 0);
-      M.beacon.position.set(M.fare.to.x, 30, M.fare.to.z);
-      M.marker.position.set(M.fare.to.x, 0.2, M.fare.to.z);
-      return 'step';
+
+  current() {
+    return MISSIONS[this.index];
+  }
+
+  stageDef() {
+    if (this.fareMode) {
+      const f = FARES[this.fareIndex % FARES.length];
+      if (this.fareStage === 0) {
+        return { text: `Pick up the fare at ${POIS[f.from].label}`, x: POIS[f.from].x, z: POIS[f.from].z, r: 8, need: 'reach' };
+      }
+      return { text: `Drop the fare at ${POIS[f.to].label}`, x: POIS[f.to].x, z: POIS[f.to].z, r: 10, need: 'reach' };
     }
-    G.cash += M.fare.reward;
-    G.audio.cash();
-    G.hud.banner('Fare paid', `+$${M.fare.reward} — the meter keeps running`);
-    G.hud.setCash(G.cash);
-    M.fare = null;
-    M.beacon.visible = false;
-    M.marker.visible = false;
-    G.hud.setObjective('Press T for a taxi fare, or M for missions', 0);
-    return 'done';
+    return this.current().stages[this.stage];
   }
-  return 'none';
-}
 
-function completeMission(G) {
-  const M = G.missions;
-  const mission = M.active;
-  G.cash += mission.reward;
-  G.audio.cash();
-  G.hud.banner(`${mission.name} complete`, `+$${mission.reward} from Vera Costa`);
-  G.hud.setCash(G.cash);
-  M.done.push(mission.id);
-  M.index++;
-  M.active = null;
-  M.beacon.visible = false;
-  M.marker.visible = false;
-  const next = currentMission(M);
-  if (next) {
-    G.hud.setObjective(`Next job: ${next.name} — press M to start`, 0);
-  } else {
-    G.hud.setObjective('Story done — press T for taxi fares', 0);
+  setTimer() {
+    this.timeLeft = this.fareMode ? 90 : this.current().time || 0;
   }
-}
 
-// Tick the mission clock; a timed mission fails when it runs out.
-export function tickMission(G, dt) {
-  const M = G.missions;
-  if (!M.active || M.timer <= 0) return;
-  M.timer -= dt;
-  if (M.timer <= 0) {
-    M.timer = 0;
-    G.hud.banner(`${M.active.name} failed`, 'Out of time — press M to try again');
-    M.active = null;
-    M.step = 0;
-    M.beacon.visible = false;
-    M.marker.visible = false;
-    G.hud.setObjective('Press M to retry the job', 0);
-  } else {
-    const step = M.active.steps[M.step];
-    if (step) G.hud.setObjective(step.text, M.timer);
+  objectiveText() {
+    if (!this.active) return 'Story complete — press M for a fare, G for the garage.';
+    return this.stageDef().text;
+  }
+
+  update(dt) {
+    if (!this.active) return;
+    const st = this.stageDef();
+    this.beacon.position.set(st.x, 30, st.z);
+    if (this.timeLeft > 0) {
+      this.timeLeft -= dt;
+      if (this.timeLeft <= 0) {
+        this.timeLeft = 0;
+        this.failStage();
+        return;
+      }
+    }
+    const p = this.G.player;
+    const d = Math.hypot(p.pos.x - st.x, p.pos.z - st.z);
+    let done = false;
+    if (st.need === 'reach') done = d <= st.r;
+    else if (st.need === 'enterCar') done = !p.onFoot && p.vehicleKind !== 'skiff' && d <= st.r;
+    else if (st.need === 'boardBoat') done = !p.onFoot && p.vehicleKind === 'skiff' && d <= st.r;
+    else if (st.need === 'speed') done = !p.onFoot && p.speed >= st.speed && d <= st.r;
+    if (done) this.completeStage();
+  }
+
+  completeStage() {
+    const G = this.G;
+    if (this.fareMode) {
+      if (this.fareStage === 0) {
+        this.fareStage = 1;
+        this.timeLeft = 90;
+        return;
+      }
+      const f = FARES[this.fareIndex % FARES.length];
+      G.player.cash += f.reward;
+      G.toast(`Fare complete +$${f.reward}`);
+      G.audio.chime();
+      this.fareIndex++;
+      this.fareStage = 0;
+      this.timeLeft = 90;
+      return;
+    }
+    this.stage++;
+    const m = this.current();
+    if (this.stage >= m.stages.length) {
+      G.player.cash += m.reward;
+      G.toast(`${m.name} complete +$${m.reward}`);
+      G.audio.chime();
+      this.index++;
+      this.stage = 0;
+      if (this.index >= MISSIONS.length) {
+        this.active = false;
+        this.beacon.visible = false;
+        G.toast('Story complete — Rico and Vera own the night. Fares still pay.');
+        return;
+      }
+      G.toast(MISSIONS[this.index].intro);
+      this.setTimer();
+    }
+  }
+
+  failStage() {
+    const G = this.G;
+    G.toast('Too slow — the fare walked away');
+    if (this.fareMode) {
+      this.fareIndex++;
+      this.fareStage = 0;
+      this.timeLeft = 90;
+      return;
+    }
+    this.stage = 0;
+    this.setTimer();
+  }
+
+  startFare() {
+    if (this.fareMode || this.active) return;
+    this.fareMode = true;
+    this.fareStage = 0;
+    this.timeLeft = 90;
+    this.G.toast('Fare accepted — pick them up');
   }
 }

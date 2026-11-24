@@ -1,82 +1,98 @@
-// Sound, synthesized in the browser with WebAudio: no audio files, no network.
-// An engine hum that follows speed, a two-tone siren while the police are
-// after you, and short blips for pickups, cash and gunshots. Everything is
-// guarded: audio only starts after a real user gesture, and a headless
-// browser that cannot hear simply never starts it.
-export function makeAudio() {
-  const audio = {
-    ctx: null, engineOsc: null, engineGain: null, sirenOsc: null, sirenGain: null,
-    enabled: false,
-    // Call from a click or keypress: the browser only allows sound after one.
-    unlock() {
-      if (audio.ctx) {
-        if (audio.ctx.state === 'suspended') audio.ctx.resume();
-        return;
-      }
-      try {
-        const Ctx = window.AudioContext || window.webkitAudioContext;
-        if (!Ctx) return;
-        audio.ctx = new Ctx();
-        audio.engineOsc = audio.ctx.createOscillator();
-        audio.engineOsc.type = 'sawtooth';
-        audio.engineOsc.frequency.value = 60;
-        audio.engineGain = audio.ctx.createGain();
-        audio.engineGain.gain.value = 0;
-        const filter = audio.ctx.createBiquadFilter();
-        filter.type = 'lowpass'; filter.frequency.value = 500;
-        audio.engineOsc.connect(filter); filter.connect(audio.engineGain); audio.engineGain.connect(audio.ctx.destination);
-        audio.engineOsc.start();
-        audio.sirenOsc = audio.ctx.createOscillator();
-        audio.sirenOsc.type = 'square';
-        audio.sirenOsc.frequency.value = 700;
-        audio.sirenGain = audio.ctx.createGain();
-        audio.sirenGain.gain.value = 0;
-        audio.sirenOsc.connect(audio.sirenGain); audio.sirenGain.connect(audio.ctx.destination);
-        audio.sirenOsc.start();
-        audio.enabled = true;
-      } catch {
-        audio.enabled = false;
-      }
-    },
-    // speed01 is 0 at rest and 1 at top speed; driving is the only engine sound.
-    engine(speed01, driving) {
-      if (!audio.enabled || !audio.engineOsc) return;
-      audio.engineOsc.frequency.value = 50 + speed01 * 160;
-      audio.engineGain.gain.value = driving ? 0.02 + speed01 * 0.03 : 0;
-    },
-    // Two tones, alternating twice a second, only while wanted.
-    siren(on, time) {
-      if (!audio.enabled || !audio.sirenOsc) return;
-      audio.sirenOsc.frequency.value = Math.floor(time * 2) % 2 === 0 ? 700 : 950;
-      audio.sirenGain.gain.value = on ? 0.015 : 0;
-    },
-    // One short blip: a pickup, a mission step, a fare paid.
-    blip(freq = 880) {
-      if (!audio.enabled || !audio.ctx) return;
-      const osc = audio.ctx.createOscillator();
-      const gain = audio.ctx.createGain();
-      osc.type = 'sine'; osc.frequency.value = freq;
-      gain.gain.setValueAtTime(0.08, audio.ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, audio.ctx.currentTime + 0.15);
-      osc.connect(gain); gain.connect(audio.ctx.destination);
-      osc.start(); osc.stop(audio.ctx.currentTime + 0.16);
-    },
-    // Cash: two blips, rising.
-    cash() { audio.blip(660); setTimeout(() => audio.blip(990), 90); },
-    // A gunshot: a burst of filtered noise.
-    shot() {
-      if (!audio.enabled || !audio.ctx) return;
-      const len = audio.ctx.sampleRate * 0.08;
-      const buffer = audio.ctx.createBuffer(1, len, audio.ctx.sampleRate);
-      const data = buffer.getChannelData(0);
-      for (let i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / len);
-      const src = audio.ctx.createBufferSource();
-      src.buffer = buffer;
-      const gain = audio.ctx.createGain();
-      gain.gain.value = 0.12;
-      src.connect(gain); gain.connect(audio.ctx.destination);
-      src.start();
-    },
-  };
-  return audio;
+// Procedural sound, no audio files: an engine hum that follows speed, a
+// two-tone police siren while wanted, a shot crack and a mission chime.
+// Everything is guarded — headless runs and browsers without a gesture get
+// silence instead of an exception.
+export class AudioSys {
+  constructor() {
+    this.ctx = null;
+    this.engine = null;
+    this.engineGain = null;
+    this.sirenOsc = null;
+    this.sirenGain = null;
+    this.sirenHigh = false;
+    this.sirenTimer = 0;
+  }
+
+  ensure() {
+    if (this.ctx) {
+      if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {});
+      return;
+    }
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      this.ctx = new AC();
+      const osc = this.ctx.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.value = 60;
+      const filter = this.ctx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.value = 400;
+      this.engineGain = this.ctx.createGain();
+      this.engineGain.gain.value = 0;
+      osc.connect(filter);
+      filter.connect(this.engineGain);
+      this.engineGain.connect(this.ctx.destination);
+      osc.start();
+      this.engine = osc;
+      this.sirenOsc = this.ctx.createOscillator();
+      this.sirenOsc.type = 'sine';
+      this.sirenOsc.frequency.value = 700;
+      this.sirenGain = this.ctx.createGain();
+      this.sirenGain.gain.value = 0;
+      this.sirenOsc.connect(this.sirenGain);
+      this.sirenGain.connect(this.ctx.destination);
+      this.sirenOsc.start();
+    } catch {
+      this.ctx = null;
+    }
+  }
+
+  setEngine(speed01) {
+    if (!this.ctx || !this.engine) return;
+    this.engine.frequency.value = 55 + speed01 * 130;
+    this.engineGain.gain.value = 0.02 + speed01 * 0.05;
+  }
+
+  setSiren(on, dt) {
+    if (!this.ctx || !this.sirenOsc) return;
+    if (!on) {
+      this.sirenGain.gain.value = 0;
+      return;
+    }
+    this.sirenTimer += dt;
+    if (this.sirenTimer > 0.4) {
+      this.sirenTimer = 0;
+      this.sirenHigh = !this.sirenHigh;
+      this.sirenOsc.frequency.value = this.sirenHigh ? 950 : 700;
+    }
+    this.sirenGain.gain.value = 0.03;
+  }
+
+  blip(freq, dur, vol, type = 'sine') {
+    if (!this.ctx) return;
+    try {
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = type;
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(vol, this.ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + dur);
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+      osc.start();
+      osc.stop(this.ctx.currentTime + dur);
+    } catch {
+      // Silence on failure.
+    }
+  }
+
+  shot() {
+    this.blip(180, 0.12, 0.15, 'square');
+  }
+
+  chime() {
+    this.blip(660, 0.15, 0.08);
+    setTimeout(() => this.blip(880, 0.25, 0.08), 120);
+  }
 }

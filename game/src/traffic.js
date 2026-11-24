@@ -1,55 +1,53 @@
-// Traffic: cars that drive the city's road grid in loops, so the streets
-// are never empty. Each car follows a rectangle of roads at a steady speed,
-// turning at the corners; they never leave the road, and they never think.
-import { ROADS_X, ROADS_Z } from './config.js';
-import { makeVehicle, driveVehicle } from './cars.js';
+// Ambient traffic: cars cruising the street grid, wrapping at the city edge.
+// They are scenery with a job — they make the screenshots read as a living city.
+const THREE = window.THREE;
 
-const KINDS = ['sedan', 'sedan', 'pickup', 'sedan', 'pickup'];
+import { STREETS_X, STREETS_Z } from './config.js';
+import { makeVehicle, spinWheels } from './cars.js';
 
-// A rectangular loop of roads: the car drives it clockwise, forever.
-function makeLoop(rng) {
-  const x1 = ROADS_X[Math.floor(rng() * 3)];
-  const x2 = ROADS_X[3 + Math.floor(rng() * 3)];
-  const z1 = ROADS_Z[Math.floor(rng() * 2)];
-  const z2 = ROADS_Z[3 + Math.floor(rng() * 2)];
-  return [
-    { x: x1, z: z1 }, { x: x2, z: z1 }, { x: x2, z: z2 }, { x: x1, z: z2 },
-  ];
-}
+const PAINT = [0x3a6ac2, 0xc2a23a, 0x7a3a8a, 0x3a8a5a, 0x8a8a8a, 0xc25a2a];
 
-export function makeTraffic(scene, rng, count = 14) {
-  const cars = [];
-  for (let i = 0; i < count; i++) {
-    const loop = makeLoop(rng);
-    const start = loop[Math.floor(rng() * 4)];
-    const kind = KINDS[Math.floor(rng() * KINDS.length)];
-    const car = makeVehicle(scene, kind, start.x, start.z, rng() * Math.PI * 2);
-    car.loop = loop;
-    car.target = (loop.indexOf(start) + 1) % 4;
-    car.cruise = 7 + rng() * 4;
-    cars.push(car);
-  }
-  return cars;
-}
-
-// Steer each traffic car toward its next loop corner; snap to the corner
-// and take the next one when it arrives.
-export function updateTraffic(cars, dt) {
-  for (const car of cars) {
-    const corner = car.loop[car.target];
-    const dx = corner.x - car.x, dz = corner.z - car.z;
-    const dist = Math.hypot(dx, dz);
-    if (dist < 2) {
-      car.target = (car.target + 1) % 4;
-      continue;
+export class Traffic {
+  constructor(scene, rng, count = 10) {
+    this.cars = [];
+    for (let i = 0; i < count; i++) {
+      const kind = rng.pick(['sedan', 'pickup', 'sedan', 'pickup', 'bike']);
+      const v = makeVehicle(kind, rng.pick(PAINT));
+      const axis = rng.chance(0.5) ? 'x' : 'z';
+      const dir = rng.chance(0.5) ? 1 : -1;
+      const car = { v, axis, dir, speed: rng.range(8, 14), x: 0, z: 0 };
+      if (axis === 'x') {
+        car.x = rng.pick(STREETS_X) + (dir > 0 ? 2 : -2);
+        car.z = rng.range(-190, 190);
+      } else {
+        car.x = rng.range(-130, 130);
+        car.z = rng.pick(STREETS_Z) + (dir > 0 ? 2 : -2);
+      }
+      v.group.position.set(car.x, 0, car.z);
+      scene.add(v.group);
+      this.cars.push(car);
     }
-    const want = Math.atan2(-dx, -dz);
-    let diff = want - car.heading;
-    while (diff > Math.PI) diff -= Math.PI * 2;
-    while (diff < -Math.PI) diff += Math.PI * 2;
-    car.heading += Math.max(-2.2 * dt, Math.min(2.2 * dt, diff));
-    car.speed = car.cruise;
-    driveVehicle(car, 1, 0, false, dt);
-    car.speed = car.cruise;
+  }
+
+  update(dt) {
+    for (const c of this.cars) {
+      if (c.axis === 'x') {
+        c.z += c.dir * c.speed * dt;
+        if (c.z > 195) c.z = -195;
+        if (c.z < -195) c.z = 195;
+        c.v.group.rotation.y = c.dir > 0 ? 0 : Math.PI;
+      } else {
+        c.x += c.dir * c.speed * dt;
+        if (c.x > 135) c.x = -135;
+        if (c.x < -135) c.x = 135;
+        c.v.group.rotation.y = c.dir > 0 ? Math.PI / 2 : -Math.PI / 2;
+      }
+      c.v.group.position.set(c.x, 0, c.z);
+      spinWheels(c.v, dt, c.speed);
+    }
+  }
+
+  positions() {
+    return this.cars.map((c) => ({ x: c.x, z: c.z }));
   }
 }

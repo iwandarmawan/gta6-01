@@ -1,52 +1,69 @@
-// Combat: a pistol, fired with the mouse, aimed at the centre of the
-// screen. A shot that lands on a pedestrian or a police car counts as a
-// crime; a shot that lands on nothing still makes a noise. The crosshair
-// is the HUD's business; this file only decides what a shot hits.
-import { WANTED } from './config.js';
-
+// Combat: click to shoot from the camera's centre. A tracer flashes, the
+// nearest cop or pedestrian in the line of fire takes the hit, and the law
+// notices. Shooting is a crime — it raises the wanted level.
 const THREE = window.THREE;
 
-// Fire one shot from the camera through the screen centre. peds and police
-// are the only things that can be hit; returns what was hit, if anything.
-export function fireShot(G, camera) {
-  const origin = camera.position.clone();
+import { WANTED } from './config.js';
+
+// Ray-sphere test: does the ray (origin, dir) pass within r of (x, y, z)?
+// Returns the distance along the ray, or Infinity.
+function raySphere(ox, oy, oz, dx, dy, dz, x, y, z, r) {
+  const cx = x - ox;
+  const cy = y - oy;
+  const cz = z - oz;
+  const t = cx * dx + cy * dy + cz * dz;
+  if (t < 0) return Infinity;
+  const d2 = cx * cx + cy * cy + cz * cz - t * t;
+  return d2 <= r * r ? t : Infinity;
+}
+
+export function shoot(G) {
+  const cam = G.camera;
+  const origin = cam.position;
   const dir = new THREE.Vector3();
-  camera.getWorldDirection(dir);
-  const ray = new THREE.Raycaster(origin, dir, 0.1, 120);
-  const targets = [];
-  for (const ped of G.peds) targets.push({ obj: ped.mesh, kind: 'ped', ref: ped });
-  for (const car of G.police.cars) targets.push({ obj: car.mesh, kind: 'police', ref: car });
-  for (const car of G.traffic) targets.push({ obj: car.mesh, kind: 'traffic', ref: car });
-  const hits = ray.intersectObjects(targets.map((t) => t.obj), true);
-  if (hits.length === 0) return null;
-  const hit = hits[0];
-  let node = hit.object;
-  while (node.parent && node.parent !== G.scene) node = node.parent;
-  const found = targets.find((t) => t.obj === node);
-  if (!found) return null;
-  return found;
-}
+  cam.getWorldDirection(dir);
+  const from = new THREE.Vector3(G.player.pos.x, 1.4, G.player.pos.z);
 
-// What a hit does: a pedestrian falls and the law notices; a police car
-// takes the hit and the wanted level climbs; traffic just gets a dent.
-export function applyHit(G, found) {
-  if (!found) return 'miss';
-  if (found.kind === 'ped') {
-    found.ref.mesh.visible = false;
-    found.ref.down = true;
-    addWanted(G, WANTED.hitPed);
-    return 'ped';
+  let best = null;
+  let bestT = 90;
+  for (const u of G.police.targets()) {
+    const t = raySphere(origin.x, origin.y, origin.z, dir.x, dir.y, dir.z, u.x, 1, u.z, u.r);
+    if (t < bestT) {
+      bestT = t;
+      best = { kind: 'cop', unit: u.unit };
+    }
   }
-  if (found.kind === 'police') {
-    addWanted(G, WANTED.shoot);
-    return 'police';
+  for (const p of G.peds.list) {
+    if (p.down) continue;
+    const t = raySphere(origin.x, origin.y, origin.z, dir.x, dir.y, dir.z, p.x, 1.2, p.z, 1);
+    if (t < bestT) {
+      bestT = t;
+      best = { kind: 'ped', ped: p };
+    }
   }
-  return 'traffic';
-}
 
-// Raise the wanted level, capped at five stars.
-export function addWanted(G, stars) {
-  G.wanted = Math.min(5, G.wanted + stars);
-  G.lastCrimeAt = G.time;
-  G.hud.setWanted(G.wanted);
+  const hit = origin.clone().addScaledVector(dir, Math.min(bestT, 90));
+  // Tracer line, gone in a blink.
+  const geo = new THREE.BufferGeometry().setFromPoints([from, hit]);
+  const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0xffe9a8, transparent: true, opacity: 0.9 }));
+  G.scene.add(line);
+  G.tracers.push({ line, ttl: 0.09 });
+  G.audio.shot();
+
+  if (!best) return;
+  if (best.kind === 'cop') {
+    best.unit.v.hp -= 34;
+    G.addWanted(WANTED.shootCop);
+    if (best.unit.v.hp <= 0) {
+      best.unit.v.disabled = true;
+      best.unit.speed = 0;
+      G.toast('Interceptor disabled');
+    }
+  } else {
+    best.ped.down = true;
+    best.ped.group.rotation.z = Math.PI / 2;
+    best.ped.group.position.y = 0.4;
+    G.addWanted(WANTED.shootPed);
+    G.toast('A pedestrian is down — the cops saw that');
+  }
 }

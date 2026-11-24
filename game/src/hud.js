@@ -1,171 +1,121 @@
-// The HUD: everything the player reads while playing, drawn as DOM over
-// the canvas. Cash and health top right, wanted stars top left, a compass
-// across the top, the objective along the bottom, and a minimap pinned to
-// the middle of the left edge — vertically centred, never bottom-anchored,
-// because a headless render once swallowed a bottom-anchored minimap whole.
-// The start, pause, garage and mission menus are DOM too.
-import { WORLD, ROADS_X, ROADS_Z, GARAGE_PRICES } from './config.js';
+// The HUD: wanted stars, cash, health, speed, mission objective and timer,
+// compass, a toast line, and a live minimap drawn on a 2D canvas. The minimap
+// sits vertically centred on the left edge — bottom-anchored minimaps fall
+// into a headless-Chromium compositing hole, so it stays centred.
+import { STREETS_X, STREETS_Z, POIS } from './config.js';
 
-function el(tag, text, style) {
-  const n = document.createElement(tag);
-  if (text !== undefined) n.textContent = text;
-  if (style) Object.assign(n.style, style);
-  return n;
-}
+const DIRS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
 
-const BAR = {
-  position: 'absolute', background: 'rgba(0,0,0,0.55)', color: '#fff',
-  fontFamily: 'sans-serif', borderRadius: '6px', padding: '6px 10px',
-  fontSize: '15px', pointerEvents: 'none', whiteSpace: 'nowrap',
-};
+export class HUD {
+  constructor() {
+    this.stars = document.getElementById('stars');
+    this.cash = document.getElementById('cash');
+    this.health = document.getElementById('health');
+    this.speed = document.getElementById('speed');
+    this.objective = document.getElementById('objective');
+    this.timer = document.getElementById('timer');
+    this.compass = document.getElementById('compass');
+    this.toastEl = document.getElementById('toast');
+    this.map = document.getElementById('minimap');
+    this.ctx = this.map.getContext('2d');
+    this.toastTtl = 0;
+  }
 
-export function makeHud() {
-  const root = el('div', undefined, {
-    position: 'absolute', inset: '0', overflow: 'hidden', pointerEvents: 'none',
-    fontFamily: 'sans-serif', userSelect: 'none',
-  });
-  document.body.appendChild(root);
+  showToast(text) {
+    this.toastEl.textContent = text;
+    this.toastEl.style.opacity = 1;
+    this.toastTtl = 3.5;
+  }
 
-  const stars = el('div', '☆☆☆☆☆', { ...BAR, top: '12px', left: '12px', fontSize: '22px', letterSpacing: '2px', color: '#ffd54f' });
-  const compass = el('div', 'N · S', { ...BAR, top: '12px', left: '50%', transform: 'translateX(-50%)' });
-  const cash = el('div', '$0', { ...BAR, top: '12px', right: '12px', fontWeight: 'bold' });
-  const health = el('div', undefined, { ...BAR, top: '48px', right: '12px', width: '160px', padding: '6px' });
-  const healthFill = el('div', undefined, { height: '10px', background: '#4caf50', borderRadius: '3px', width: '100%' });
-  health.appendChild(healthFill);
-  const objective = el('div', '', { ...BAR, bottom: '52px', left: '50%', transform: 'translateX(-50%)' });
-  const hint = el('div', 'WASD move/drive · E enter car · Click shoot · M job · G garage · P pause', {
-    ...BAR, bottom: '12px', left: '50%', transform: 'translateX(-50%)', fontSize: '13px', opacity: '0.85',
-  });
-  const speed = el('div', '0 km/h', { ...BAR, bottom: '12px', right: '12px', fontSize: '18px', fontWeight: 'bold' });
-  const banner = el('div', '', {
-    ...BAR, top: '18%', left: '50%', transform: 'translateX(-50%)', fontSize: '26px',
-    fontWeight: 'bold', textAlign: 'center', display: 'none', padding: '12px 22px',
-  });
-  const bannerSub = el('div', '', { fontSize: '15px', fontWeight: 'normal', marginTop: '4px' });
-  banner.appendChild(bannerSub);
-  const toast = el('div', '', { ...BAR, top: '64px', left: '50%', transform: 'translateX(-50%)', display: 'none' });
+  update(G, dt) {
+    const p = G.player;
+    let s = '';
+    for (let i = 0; i < 5; i++) s += i < p.wanted ? '★' : '☆';
+    this.stars.textContent = s;
+    this.cash.textContent = '$' + Math.floor(p.cash);
+    this.health.style.width = Math.max(0, p.health) + '%';
+    this.speed.textContent = Math.round(Math.abs(p.speed) * 3.6) + ' km/h';
+    this.objective.textContent = G.missions.objectiveText();
+    this.timer.textContent = G.missions.timeLeft > 0 ? Math.ceil(G.missions.timeLeft) + 's' : '';
+    const a = (Math.atan2(Math.sin(p.heading), -Math.cos(p.heading)) * 180 / Math.PI + 360) % 360;
+    const idx = Math.round(a / 45) % 8;
+    this.compass.textContent = `${DIRS[(idx + 7) % 8]} ${DIRS[idx]} ${DIRS[(idx + 1) % 8]} · ${DIRS[(idx + 2) % 8]} ${DIRS[(idx + 3) % 8]}`;
+    if (this.toastTtl > 0) {
+      this.toastTtl -= dt;
+      if (this.toastTtl <= 0) this.toastEl.style.opacity = 0;
+    }
+    this.drawMinimap(G);
+  }
 
-  // The minimap: a small canvas, vertically centred on the left edge.
-  const map = document.createElement('canvas');
-  map.width = 150; map.height = 150;
-  Object.assign(map.style, {
-    position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)',
-    border: '2px solid rgba(255,255,255,0.7)', borderRadius: '6px',
-    background: '#6fae4e', pointerEvents: 'none',
-  });
-  root.append(map, stars, compass, cash, health, objective, hint, speed, banner, toast);
-
-  // Menus: one overlay, its content swapped per menu.
-  const menu = el('div', undefined, {
-    position: 'absolute', inset: '0', display: 'none', alignItems: 'center',
-    justifyContent: 'center', background: 'rgba(0,0,0,0.6)', pointerEvents: 'auto',
-  });
-  const menuCard = el('div', undefined, {
-    background: '#1c2733', color: '#fff', borderRadius: '10px', padding: '28px 36px',
-    maxWidth: '520px', textAlign: 'center', fontFamily: 'sans-serif',
-  });
-  menu.appendChild(menuCard);
-  root.appendChild(menu);
-
-  const hud = {
-    root, menu, menuCard,
-    setCash(v) { cash.textContent = `$${v}`; },
-    setWanted(n) {
-      stars.textContent = '★'.repeat(n) + '☆'.repeat(5 - n);
-      stars.style.color = n >= 4 ? '#ff5252' : '#ffd54f';
-    },
-    setHealth(hp, max) {
-      const pct = Math.max(0, Math.min(100, (hp / max) * 100));
-      healthFill.style.width = `${pct}%`;
-      healthFill.style.background = pct > 50 ? '#4caf50' : pct > 25 ? '#ff9800' : '#f44336';
-    },
-    setSpeed(kmh) { speed.textContent = `${Math.round(kmh)} km/h`; },
-    setCompass(headingDeg) {
-      const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
-      const idx = Math.round((((headingDeg % 360) + 360) % 360) / 45) % 8;
-      compass.textContent = `N NE E SE S SW W NW · ${dirs[idx]}`;
-    },
-    setObjective(text, seconds) {
-      objective.textContent = seconds > 0 ? `${text} — ${Math.ceil(seconds)}s` : text;
-    },
-    banner(title, sub) {
-      banner.firstChild.textContent = title;
-      bannerSub.textContent = sub || '';
-      banner.style.display = 'block';
-      clearTimeout(hud._bannerTimer);
-      hud._bannerTimer = setTimeout(() => { banner.style.display = 'none'; }, 3200);
-    },
-    toast(text) {
-      toast.textContent = text;
-      toast.style.display = 'block';
-      clearTimeout(hud._toastTimer);
-      hud._toastTimer = setTimeout(() => { toast.style.display = 'none'; }, 2200);
-    },
-    showMenu(html) { menuCard.innerHTML = html; menu.style.display = 'flex'; },
-    hideMenu() { menu.style.display = 'none'; },
-    // The minimap: grass, the sea on the right, roads as pale lines, the
-    // player as a white arrow, police as blue dots, the objective as gold.
-    drawMap(G) {
-      const g = map.getContext('2d');
-      const W = map.width, H = map.height;
-      const sx = (x) => ((x - WORLD.minX) / (WORLD.maxX - WORLD.minX)) * W;
-      const sz = (z) => ((z - WORLD.minZ) / (WORLD.maxZ - WORLD.minZ)) * H;
-      g.fillStyle = '#6fae4e'; g.fillRect(0, 0, W, H);
-      g.fillStyle = '#2e7fa8'; g.fillRect(sx(WORLD.seaX), 0, W - sx(WORLD.seaX), H);
-      g.fillStyle = '#dcc98f'; g.fillRect(sx(WORLD.sandX0), 0, sx(WORLD.sandX1) - sx(WORLD.sandX0), H);
-      g.strokeStyle = 'rgba(255,255,255,0.85)'; g.lineWidth = 1.5;
-      for (const x of ROADS_X) { g.beginPath(); g.moveTo(sx(x), 0); g.lineTo(sx(x), H); g.stroke(); }
-      for (const z of ROADS_Z) { g.beginPath(); g.moveTo(0, sz(z)); g.lineTo(W, sz(z)); g.stroke(); }
-      const dot = (x, z, color, r) => {
-        g.fillStyle = color;
-        g.beginPath(); g.arc(sx(x), sz(z), r, 0, Math.PI * 2); g.fill();
-      };
-      const M = G.missions;
-      const target = M.active ? M.active.steps[M.step]?.target
-        : M.fare ? (M.fareStep === 0 ? M.fare.from : M.fare.to) : null;
-      if (target) dot(target.x, target.z, '#ffeb3b', 5);
-      for (const car of G.police.cars) dot(car.x, car.z, '#448aff', 3);
-      // The player, drawn as an arrow pointing where they face.
-      g.save();
-      g.translate(sx(G.player.x), sz(G.player.z));
-      g.rotate(Math.atan2(Math.sin(G.player.heading), -Math.cos(G.player.heading)) + Math.PI / 2);
-      g.fillStyle = '#ffffff';
-      g.beginPath(); g.moveTo(0, -6); g.lineTo(4, 5); g.lineTo(-4, 5); g.closePath(); g.fill();
-      g.restore();
-    },
-  };
-  return hud;
-}
-
-// The start screen: the game's name, what it is, and how to play it.
-export function startMenuHtml() {
-  return `<h1 style="margin:0 0 6px">SOLMAR BAY</h1>
-  <p style="margin:0 0 14px;color:#b0bec5">An original open-world crime game in the spirit of GTA 6.</p>
-  <p style="text-align:left;line-height:1.7;margin:0 0 16px">Rico Marlowe drives for Vera Costa across a sun-soaked coastal city: six jobs, a garage to spend the cash in, and the Solmar PD on his tail. Steal cars, run fares, outrun the law.<br><br>
-  <b>WASD</b> move / drive &nbsp;·&nbsp; <b>E</b> enter or leave a car &nbsp;·&nbsp; <b>Click</b> shoot<br>
-  <b>M</b> next job &nbsp;·&nbsp; <b>T</b> taxi fare &nbsp;·&nbsp; <b>G</b> garage &nbsp;·&nbsp; <b>P</b> pause</p>
-  <button id="playBtn" style="font-size:18px;padding:10px 28px;border-radius:8px;border:0;background:#2e7d32;color:#fff;cursor:pointer">Play</button>`;
-}
-
-// The garage: spend cash on repairs and upgrades.
-export function garageMenuHtml(G) {
-  const u = G.upgrades;
-  return `<h2 style="margin:0 0 10px">RICO'S GARAGE</h2>
-  <p style="margin:0 0 14px">Cash: <b>$${G.cash}</b> &nbsp;·&nbsp; Engine: ${u.engine ? 'Upgraded (+25% speed)' : 'Stock'} &nbsp;·&nbsp; Armour: ${u.armor ? 'Fitted (+50 HP)' : 'Stock'}</p>
-  <div style="display:flex;flex-direction:column;gap:8px">
-  <button data-act="repair" style="padding:10px;border-radius:8px;border:0;background:#1565c0;color:#fff;cursor:pointer">Repair — $${GARAGE_PRICES.repair}</button>
-  <button data-act="engine" style="padding:10px;border-radius:8px;border:0;background:#1565c0;color:#fff;cursor:pointer" ${u.engine ? 'disabled' : ''}>Engine upgrade (+25% speed) — $${GARAGE_PRICES.engine}</button>
-  <button data-act="armor" style="padding:10px;border-radius:8px;border:0;background:#1565c0;color:#fff;cursor:pointer" ${u.armor ? 'disabled' : ''}>Armour (+50 max HP) — $${GARAGE_PRICES.armor}</button>
-  <button data-act="close" style="padding:10px;border-radius:8px;border:0;background:#555;color:#fff;cursor:pointer">Back to the city</button>
-  </div>`;
-}
-
-// The mission list: what is done, what is next, what it pays.
-export function missionsMenuHtml(G) {
-  const M = G.missions;
-  const rows = M.done.map((id) => `<div>✓ ${id}</div>`).join('');
-  const next = M.index < 6 ? `<div>Next: <b>${['First Wheels', 'Harbour Escape', 'City Taxi', 'Sunset Courier', 'Rooftop Leap', 'Lighthouse Cache'][M.index]}</b></div>` : '<div>Story complete — taxi fares keep paying.</div>';
-  return `<h2 style="margin:0 0 10px">JOBS FOR VERA COSTA</h2>
-  <div style="text-align:left;line-height:1.9">${rows || '<div>No jobs done yet.</div>'}${next}</div>
-  <button data-act="close" style="padding:10px 20px;margin-top:16px;border-radius:8px;border:0;background:#555;color:#fff;cursor:pointer">Close</button>`;
+  drawMinimap(G) {
+    const ctx = this.ctx;
+    const S = 150;
+    const mx = (x) => ((x + 200) / 400) * S;
+    const mz = (z) => ((z + 200) / 400) * S;
+    ctx.fillStyle = '#3a2a3a';
+    ctx.fillRect(0, 0, S, S);
+    // Sea on the west (left), beach strip, coast road.
+    ctx.fillStyle = '#35356b';
+    ctx.fillRect(0, 0, mx(-150), S);
+    ctx.fillStyle = '#d9a066';
+    ctx.fillRect(mx(-168), 0, mx(-140) - mx(-168), S);
+    ctx.strokeStyle = '#8a7a6a';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(mx(-145), 0);
+    ctx.lineTo(mx(-145), S);
+    ctx.stroke();
+    // Street grid.
+    ctx.strokeStyle = '#6a5a6a';
+    for (const x of STREETS_X) {
+      ctx.beginPath();
+      ctx.moveTo(mx(x), 0);
+      ctx.lineTo(mx(x), S);
+      ctx.stroke();
+    }
+    for (const z of STREETS_Z) {
+      ctx.beginPath();
+      ctx.moveTo(0, mz(z));
+      ctx.lineTo(S, mz(z));
+      ctx.stroke();
+    }
+    // Points of interest.
+    const dot = (x, z, color, r = 3) => {
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(mx(x), mz(z), r, 0, Math.PI * 2);
+      ctx.fill();
+    };
+    dot(POIS.lighthouse.x, POIS.lighthouse.z, '#ffd24a');
+    dot(POIS.marina.x, POIS.marina.z, '#5a8ac2');
+    dot(POIS.airfield.x, POIS.airfield.z, '#8a8a8a');
+    dot(POIS.plaza.x, POIS.plaza.z, '#5ac28a');
+    dot(POIS.garage.x, POIS.garage.z, '#e07a1e');
+    // Mission target: a pulsing yellow ring.
+    if (G.missions.active) {
+      const st = G.missions.stageDef();
+      ctx.strokeStyle = '#ffd24a';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(mx(st.x), mz(st.z), 5 + Math.sin(G.time * 4) * 1.5, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    // Police: red dots.
+    for (const u of G.police.units) {
+      dot(u.v.group.position.x, u.v.group.position.z, '#ff2a2a', 2.5);
+    }
+    // Player: a white arrow pointing along the heading.
+    const p = G.player;
+    ctx.save();
+    ctx.translate(mx(p.pos.x), mz(p.pos.z));
+    ctx.rotate(Math.atan2(Math.sin(p.heading), -Math.cos(p.heading)));
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.moveTo(0, -6);
+    ctx.lineTo(4, 5);
+    ctx.lineTo(-4, 5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
 }

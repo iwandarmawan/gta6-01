@@ -1,137 +1,155 @@
-// Vehicles: how each kind looks, and how it moves. Arcade physics on
-// purpose — a car should answer the keys at once, not simulate suspension.
-// Every vehicle is a group with a body, a cabin and four wheels (the boat
-// and the bike are shaped differently), and a state: position, heading and
-// speed. The police interceptor is a sedan with a light bar.
-import { VEHICLES } from './config.js';
-
+// Vehicle factory: every drivable thing in Solmar Bay is built from boxes.
+// Forward is local +z; group.rotation.y = heading. Wheels spin around their
+// axle (a wrapper group per wheel), and every vehicle carries a blob shadow.
 const THREE = window.THREE;
 
-function makeBody(color, w, h, d, y) {
-  const mesh = new THREE.Mesh(
-    new THREE.BoxGeometry(w, h, d),
-    new THREE.MeshLambertMaterial({ color }),
-  );
-  mesh.position.y = y; mesh.castShadow = true;
-  return mesh;
+import { VEHICLES } from './config.js';
+
+function lambert(color) {
+  return new THREE.MeshLambertMaterial({ color });
+}
+function basic(color) {
+  return new THREE.MeshBasicMaterial({ color });
 }
 
-function makeWheel() {
-  const wheel = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.42, 0.42, 0.3, 10),
-    new THREE.MeshLambertMaterial({ color: 0x1a1a1a }),
-  );
-  wheel.rotation.z = Math.PI / 2;
-  wheel.castShadow = true;
-  return wheel;
+function wheel(r, w) {
+  const g = new THREE.Group();
+  const tyre = new THREE.Mesh(new THREE.CylinderGeometry(r, r, w, 10), lambert(0x1a1a1a));
+  tyre.rotation.z = Math.PI / 2;
+  g.add(tyre);
+  const hub = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.5, r * 0.5, w + 0.02, 8), lambert(0x8a8a8a));
+  hub.rotation.z = Math.PI / 2;
+  g.add(hub);
+  return g;
 }
 
-// A vehicle mesh for a kind, with its wheels grouped so they can spin.
-export function buildVehicleMesh(kind) {
+function blobShadow(group, radius) {
+  const s = new THREE.Mesh(
+    new THREE.CircleGeometry(radius, 16),
+    new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.3 }),
+  );
+  s.rotation.x = -Math.PI / 2;
+  s.position.y = 0.02;
+  group.add(s);
+}
+
+export function makeVehicle(kind, color) {
   const spec = VEHICLES[kind];
+  const c = color ?? spec.color;
   const group = new THREE.Group();
   const wheels = [];
-  if (kind === 'boat') {
-    const hull = makeBody(spec.color, 2.4, 0.9, 6, 0.5);
-    group.add(hull);
-    const rim = makeBody(0x37474f, 2.0, 0.5, 5.2, 1.1);
-    group.add(rim);
-    const seat = makeBody(0x8d6e63, 1.4, 0.5, 1.6, 1.2);
-    group.add(seat);
-    return { group, wheels, length: 6 };
+  let lightBar = null;
+
+  function addWheel(x, y, z, r = 0.38, w = 0.3) {
+    const wh = wheel(r, w);
+    wh.position.set(x, y, z);
+    group.add(wh);
+    wheels.push(wh);
+    return wh;
   }
-  if (kind === 'bike') {
-    const frame = makeBody(spec.color, 0.5, 0.5, 2.4, 0.8);
-    group.add(frame);
-    const tank = makeBody(0x222222, 0.5, 0.4, 0.8, 1.0);
-    group.add(tank);
-    const seat = makeBody(0x111111, 0.45, 0.25, 0.9, 0.95);
-    seat.position.z = 0.7;
-    group.add(seat);
-    for (const [x, z] of [[0, -0.9], [0, 0.9]]) {
-      const wheel = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.45, 0.45, 0.2, 12),
-        new THREE.MeshLambertMaterial({ color: 0x1a1a1a }),
-      );
-      wheel.rotation.z = Math.PI / 2;
-      wheel.position.set(x, 0.45, z);
-      group.add(wheel);
-      wheels.push(wheel);
+
+  if (kind === 'sedan' || kind === 'interceptor') {
+    const body = new THREE.Mesh(new THREE.BoxGeometry(2, 0.7, 4.4), lambert(c));
+    body.position.y = 0.55;
+    group.add(body);
+    const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.6, 2.2), lambert(0x2a3038));
+    cabin.position.set(0, 1.2, -0.2);
+    group.add(cabin);
+    addWheel(-0.95, 0.38, 1.45);
+    addWheel(0.95, 0.38, 1.45);
+    addWheel(-0.95, 0.38, -1.45);
+    addWheel(0.95, 0.38, -1.45);
+    for (const sx of [-0.6, 0.6]) {
+      const head = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.2, 0.1), basic(0xffe9a8));
+      head.position.set(sx, 0.6, 2.22);
+      group.add(head);
+      const tail = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.2, 0.1), basic(0xc22a2a));
+      tail.position.set(sx, 0.6, -2.22);
+      group.add(tail);
     }
-    return { group, wheels, length: 2.4 };
-  }
-  const body = makeBody(spec.color, 2, 0.7, kind === 'pickup' ? 4.6 : 4.2, 0.75);
-  group.add(body);
-  const cabin = makeBody(kind === 'pickup' ? 0x222222 : 0x9fc3e0, 1.7, 0.6, kind === 'pickup' ? 1.6 : 2.2, 1.35);
-  cabin.position.z = kind === 'pickup' ? 0.9 : 0;
-  group.add(cabin);
-  if (kind === 'pickup') {
-    const bed = makeBody(0x333333, 1.8, 0.4, 2.2, 1.0);
-    bed.position.z = -1.1;
+    if (kind === 'interceptor') {
+      for (const sx of [-1.01, 1.01]) {
+        const door = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.5, 2.4), lambert(0xe8e4da));
+        door.position.set(sx, 0.6, 0);
+        group.add(door);
+      }
+      const bar = new THREE.Group();
+      const red = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.25, 0.4), basic(0xff2a2a));
+      red.position.x = -0.35;
+      const blue = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.25, 0.4), basic(0x2a6aff));
+      blue.position.x = 0.35;
+      bar.add(red, blue);
+      bar.position.y = 1.65;
+      group.add(bar);
+      lightBar = { red, blue };
+    }
+    blobShadow(group, 2.4);
+  } else if (kind === 'pickup') {
+    const body = new THREE.Mesh(new THREE.BoxGeometry(2, 0.8, 4.6), lambert(c));
+    body.position.y = 0.6;
+    group.add(body);
+    const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.7, 1.6), lambert(0x2a3038));
+    cabin.position.set(0, 1.3, -0.9);
+    group.add(cabin);
+    const bed = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.25, 1.8), lambert(0x3a3a3a));
+    bed.position.set(0, 1.05, 1.1);
     group.add(bed);
-  }
-  if (kind === 'police') {
-    const bar = makeBody(0xffffff, 1.4, 0.25, 0.5, 1.75);
+    addWheel(-0.95, 0.42, 1.5, 0.42);
+    addWheel(0.95, 0.42, 1.5, 0.42);
+    addWheel(-0.95, 0.42, -1.5, 0.42);
+    addWheel(0.95, 0.42, -1.5, 0.42);
+    blobShadow(group, 2.5);
+  } else if (kind === 'bike') {
+    const frame = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.5, 2.1), lambert(c));
+    frame.position.y = 0.7;
+    group.add(frame);
+    const seat = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.15, 0.6), lambert(0x1a1a1a));
+    seat.position.set(0, 1.0, -0.5);
+    group.add(seat);
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.08, 0.08), lambert(0x1a1a1a));
+    bar.position.set(0, 1.05, 0.85);
     group.add(bar);
-    const red = new THREE.Mesh(
-      new THREE.BoxGeometry(0.6, 0.2, 0.45),
-      new THREE.MeshBasicMaterial({ color: 0xff0000 }),
-    );
-    red.position.set(-0.35, 1.9, 0);
-    group.add(red);
-    const blue = new THREE.Mesh(
-      new THREE.BoxGeometry(0.6, 0.2, 0.45),
-      new THREE.MeshBasicMaterial({ color: 0x0000ff }),
-    );
-    blue.position.set(0.35, 1.9, 0);
-    group.add(blue);
+    // Rider: torso and helmet, leaning over the tank.
+    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.7, 0.4), lambert(0x8a2a3a));
+    torso.position.set(0, 1.35, -0.2);
+    torso.rotation.x = 0.4;
+    group.add(torso);
+    const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.28, 10, 8), lambert(0xe8e4da));
+    helmet.position.set(0, 1.75, 0.05);
+    group.add(helmet);
+    addWheel(0, 0.45, 0.85, 0.45, 0.15);
+    addWheel(0, 0.45, -0.85, 0.45, 0.15);
+    blobShadow(group, 1.4);
+  } else if (kind === 'skiff') {
+    const hull = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.8, 5), lambert(c));
+    hull.position.y = 0.4;
+    group.add(hull);
+    const inner = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.3, 4.4), lambert(0x3a3a44));
+    inner.position.y = 0.75;
+    group.add(inner);
+    for (const z of [-1.2, 0.4]) {
+      const seat = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.15, 0.5), lambert(0x6a4a2a));
+      seat.position.set(0, 0.85, z);
+      group.add(seat);
+    }
+    const motor = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.9, 0.5), lambert(0x1a1a1a));
+    motor.position.set(0, 0.6, -2.6);
+    group.add(motor);
+    blobShadow(group, 2.6);
   }
-  for (const [x, z] of [[-0.95, -1.4], [0.95, -1.4], [-0.95, 1.4], [0.95, 1.4]]) {
-    const wheel = makeWheel();
-    wheel.position.set(x, 0.42, z);
-    group.add(wheel);
-    wheels.push(wheel);
-  }
-  return { group, wheels, length: kind === 'pickup' ? 4.6 : 4.2 };
+
+  return { group, spec, kind, wheels, lightBar };
 }
 
-// A live vehicle: its mesh, its kind, where it is and how fast it goes.
-export function makeVehicle(scene, kind, x, z, heading = 0) {
-  const { group, wheels, length } = buildVehicleMesh(kind);
-  group.position.set(x, kind === 'boat' ? 0.1 : 0, z);
-  group.rotation.y = heading;
-  scene.add(group);
-  return {
-    kind, spec: VEHICLES[kind], mesh: group, wheels, length,
-    x, z, heading, speed: 0, steer: 0,
-    // Forward vector from the heading (three.js: -z is forward at heading 0).
-    forward() { return { x: -Math.sin(this.heading), z: -Math.cos(this.heading) }; },
-  };
+// Spin the wheels to match a speed in m/s.
+export function spinWheels(veh, dt, speed) {
+  for (const w of veh.wheels) w.rotation.x += (speed * dt) / 0.4;
 }
 
-// One step of arcade driving. throttle: -1 reverse, 0 coast, 1 full.
-// steer: -1 left, 1 right. handbrake cuts speed hard.
-export function driveVehicle(v, throttle, steer, handbrake, dt) {
-  const top = v.spec.top * (v.boost || 1);
-  if (throttle > 0) v.speed += v.spec.accel * dt;
-  else if (throttle < 0) v.speed -= (v.speed > 0.5 ? v.spec.brake : v.spec.accel * 0.6) * dt;
-  else v.speed -= Math.sign(v.speed) * 6 * dt;
-  if (handbrake) v.speed -= Math.sign(v.speed) * 30 * dt;
-  if (Math.abs(v.speed) < 0.05 && throttle === 0) v.speed = 0;
-  v.speed = Math.max(-top * 0.45, Math.min(top, v.speed));
-  const turn = steer * v.spec.turn * Math.min(1, Math.abs(v.speed) / 8) * Math.sign(v.speed || 1);
-  v.heading += turn * dt;
-  const f = v.forward();
-  v.x += f.x * v.speed * dt;
-  v.z += f.z * v.speed * dt;
-  v.mesh.position.set(v.x, v.kind === 'boat' ? 0.1 + Math.sin(Date.now() * 0.002) * 0.05 : 0, v.z);
-  v.mesh.rotation.y = v.heading;
-  // The bike leans into its turns; cars stay flat.
-  v.mesh.rotation.z = v.kind === 'bike' ? -steer * Math.min(0.35, Math.abs(v.speed) / 60) : 0;
-  for (const wheel of v.wheels) wheel.rotation.x += (v.speed / 0.42) * dt;
-}
-
-// Remove a vehicle from the scene for good.
-export function removeVehicle(scene, v) {
-  scene.remove(v.mesh);
+// Flash a police light bar, red then blue, twice a second.
+export function flashLightBar(veh, t) {
+  if (!veh.lightBar) return;
+  const on = Math.sin(t * 12) > 0;
+  veh.lightBar.red.material.color.setHex(on ? 0xff2a2a : 0x4a1010);
+  veh.lightBar.blue.material.color.setHex(on ? 0x10104a : 0x2a6aff);
 }
