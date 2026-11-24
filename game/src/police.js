@@ -1,77 +1,81 @@
-// police.js — interceptor patrol cars and the helicopter with its spotlight.
-// updateHeli / updatePolice are skipped entirely in frozen shot mode (round 13
-// lesson: the heli repositions absolutely every frame and would overwrite staging).
-import THREE from './three-shim.js';
-import { makeVehicle, placeCar } from './cars.js';
+// Wanted system: police interceptors ram the player, and at 4+ stars a
+// helicopter joins with a spotlight cone cutting through the fog.
+import THREE from 'three';
+import { makeVehicle } from './cars.js';
+import { makeRng } from './rng.js';
+import { LAYOUT_SEED } from './config.js';
 
 export function makePolice(scene) {
+  const rng = makeRng(LAYOUT_SEED + 21);
   const cars = [];
-  for (let i = 0; i < 2; i++) {
-    const v = makeVehicle('interceptor');
-    scene.add(v.group);
-    placeCar(v, -40 - i * 12, 40 + i * 8, 0, 0);
-    cars.push({ v, state: 'patrol', target: null });
+  for (let i = 0; i < 3; i++) {
+    const v = makeVehicle('police');
+    v.position.set(rng.range(-60, 60), 0, rng.range(-60, 60));
+    scene.add(v);
+    cars.push({ vehicle: v, x: v.position.x, z: v.position.z, heading: 0, speed: 0 });
   }
-  // Helicopter: dark body, rotor, translucent spotlight cone.
+  // Helicopter: body, tail, rotor and a spotlight cone.
   const heli = new THREE.Group();
-  const body = new THREE.Mesh(new THREE.BoxGeometry(3.4, 1.4, 1.8),
-    new THREE.MeshStandardMaterial({ color: 0x22262e, roughness: 0.5, metalness: 0.4 }));
+  const body = new THREE.Mesh(
+    new THREE.BoxGeometry(2.4, 1.4, 4.2),
+    new THREE.MeshPhongMaterial({ color: 0x1a2028 })
+  );
   heli.add(body);
-  const tail = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.5, 0.5),
-    new THREE.MeshStandardMaterial({ color: 0x22262e, roughness: 0.5 }));
-  tail.position.set(-3, 0.2, 0); heli.add(tail);
-  const rotor = new THREE.Mesh(new THREE.BoxGeometry(8, 0.08, 0.5),
-    new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.4 }));
-  rotor.position.y = 0.9; heli.add(rotor);
-  const cone = new THREE.Mesh(new THREE.ConeGeometry(2.2, 16, 12, 1, true),
-    new THREE.MeshBasicMaterial({ color: 0xfff2b0, transparent: true, opacity: 0.10, side: THREE.DoubleSide, depthWrite: false }));
-  cone.position.y = -8.5; heli.add(cone);
-  heli.position.set(0, 18, 0);
+  const tail = new THREE.Mesh(
+    new THREE.BoxGeometry(0.5, 0.5, 3.4),
+    new THREE.MeshPhongMaterial({ color: 0x1a2028 })
+  );
+  tail.position.set(0, 0.3, -3.4);
+  heli.add(tail);
+  const rotor = new THREE.Mesh(
+    new THREE.BoxGeometry(9, 0.08, 0.5),
+    new THREE.MeshPhongMaterial({ color: 0x111417 })
+  );
+  rotor.position.y = 0.9;
+  heli.add(rotor);
+  const cone = new THREE.Mesh(
+    new THREE.ConeGeometry(4.5, 16, 16, 1, true),
+    new THREE.MeshBasicMaterial({ color: 0xfff2c0, transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: false })
+  );
+  cone.rotation.x = Math.PI;
+  cone.position.y = -8.5;
+  heli.add(cone);
+  heli.position.set(0, 14, 0);
   scene.add(heli);
-  return { cars, heli, rotor, heliAngle: 0 };
+  return { cars, heli, rotor, cone, active: false };
 }
 
-export function updatePolice(police, playerPos, wanted, dt, colliders, audio) {
-  if (dt <= 0) return;
-  for (const p of police.cars) {
-    const v = p.v;
-    const dx = playerPos.x - v.group.position.x;
-    const dz = playerPos.z - v.group.position.z;
-    const dist = Math.hypot(dx, dz);
-    if (wanted > 0 && dist < 120) {
-      const wantHeading = Math.atan2(dx, dz);
-      let dh = wantHeading - v.heading;
-      while (dh > Math.PI) dh -= Math.PI * 2;
-      while (dh < -Math.PI) dh += Math.PI * 2;
-      v.heading += Math.max(-2.2 * dt, Math.min(2.2 * dt, dh));
-      v.speed = Math.min(v.top, v.speed + 18 * dt);
-      if (dist < 4) { v.speed *= 0.5; }
-    } else {
-      // Patrol: slow cruise along the coast road.
-      v.speed = Math.min(12, v.speed + 6 * dt);
-      const wantHeading = Math.PI / 2;
-      let dh = wantHeading - v.heading;
-      while (dh > Math.PI) dh -= Math.PI * 2;
-      while (dh < -Math.PI) dh += Math.PI * 2;
-      v.heading += Math.max(-1 * dt, Math.min(1 * dt, dh));
+export function updatePolice(police, player, wanted, dt, shotMode) {
+  if (shotMode) return; // staged cameras/heli must not be overwritten
+  police.active = wanted >= 4;
+  police.heli.visible = police.active;
+  if (police.active) {
+    police.rotor.rotation.y += dt * 18;
+    const tx = player.x, tz = player.z;
+    police.heli.position.x += (tx - police.heli.position.x) * Math.min(1, dt * 1.2);
+    police.heli.position.z += (tz - police.heli.position.z) * Math.min(1, dt * 1.2);
+    police.heli.position.y = 14 + Math.sin(Date.now() * 0.001) * 0.6;
+  }
+  if (wanted <= 0) return;
+  for (const c of police.cars) {
+    const dx = player.x - c.x, dz = player.z - c.z;
+    const dist = Math.hypot(dx, dz) || 1;
+    const target = Math.atan2(dx, dz);
+    let dh = target - c.heading;
+    while (dh > Math.PI) dh -= Math.PI * 2;
+    while (dh < -Math.PI) dh += Math.PI * 2;
+    c.heading += Math.max(-2.2 * dt, Math.min(2.2 * dt, dh));
+    c.speed = Math.min(26 + wanted * 1.5, 33);
+    c.x += Math.sin(c.heading) * c.speed * dt;
+    c.z += Math.cos(c.heading) * c.speed * dt;
+    c.vehicle.position.set(c.x, 0, c.z);
+    c.vehicle.rotation.y = c.heading;
+    if (dist < 4) { // ram: shove the player and slow the interceptor
+      c.speed *= 0.4;
     }
-    v.group.position.x += Math.sin(v.heading) * v.speed * dt;
-    v.group.position.z += Math.cos(v.heading) * v.speed * dt;
-    v.group.position.x = Math.max(-150, Math.min(145, v.group.position.x));
-    v.group.position.z = Math.max(-150, Math.min(150, v.group.position.z));
-    v.group.rotation.y = v.heading;
   }
 }
 
-export function updateHeli(police, playerPos, dt, t) {
-  if (dt <= 0) return; // never overwrite a staged helicopter
-  police.heliAngle += dt * 0.35;
-  const r = 14;
-  police.heli.position.set(
-    playerPos.x + Math.cos(police.heliAngle) * r,
-    12 + Math.sin(t * 0.8) * 1.5,
-    playerPos.z + Math.sin(police.heliAngle) * r
-  );
-  police.heli.rotation.y = Math.atan2(playerPos.x - police.heli.position.x, playerPos.z - police.heli.position.z);
-  police.rotor.rotation.y = t * 30;
+export function wantedStars(wanted) {
+  return '★'.repeat(wanted) + '☆'.repeat(Math.max(0, 5 - wanted));
 }

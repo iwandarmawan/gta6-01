@@ -1,31 +1,46 @@
-// config.js — world constants, storm palette, story, prices.
-export const WORLD = {
-  size: 480, half: 240,
-  seaX: 150,            // water east of x = 150
-  streetStep: 40, streetMin: -140, streetMax: 140, roadW: 10,
-  seed: 14,             // round-14 layout seed (new grid offset vs v9/v10/v12/v13)
+// Solmar Bay — Foggy Morning. Layout seed 15, sea WEST (x < -150).
+// The fog palette: pale blue-grey sky, muted towers, lamps still glowing,
+// headlights cutting through the mist, wet streets from the night's rain.
+export const LAYOUT_SEED = 15;
+export const GRID_OFFSET = -4;
+export const SEA_EDGE = -150; // x < SEA_EDGE is open water
+
+export const PLAZA = { x: 0, z: 0 };
+export const GARAGE = { x: 35, z: 28 };
+export const LIGHTHOUSE = { x: -178, z: 0 };
+export const MARINA = { x: -152, z: 120 };
+export const AIRFIELD = { x: 168, z: -70 };
+export const CITY_BOUND = 200;
+
+export const COLORS = {
+  sky: 0xaebac2,
+  fog: 0x9fb0ba,
+  ground: 0x2a3138,
+  road: 0x1c2126,
+  roadLine: 0xc8cdd2,
+  sea: 0x2e4a5e,
+  seaDeep: 0x22384a,
+  building: 0x5a6672,
+  buildingDark: 0x46525e,
+  windowLit: 0xffd98a,
+  windowCool: 0x9fc4e8,
+  palm: 0x2e4d33,
+  trunk: 0x6b4a2f,
+  lampGlow: 0xffe6a8,
+  lighthouse: 0xd8d3c8,
+  beacon: 0xffc94d,
+  runway: 0x23282e,
 };
-export const STORM = {
-  sky: 0x232e3d, fog: 0x27313f, fogNear: 60, fogFar: 420,
-  ambient: 0x4a5568, ambientI: 0.9,
-  hemiSky: 0x5a6a80, hemiGround: 0x2a2f28, hemiI: 0.7,
-  sun: 0x8a97a8, sunI: 0.55,                 // flat storm light
-  road: 0x1d2126, roadWet: 0x14181d, ground: 0x33382f,
-  building: [0x6b5a44, 0x5a5148, 0x4a5560, 0x71604a, 0x54423a],
-  sea: 0x0e2233, seaStorm: 0x12283a,
-};
-export const MISSION_DEFS = [
-  { name: 'First Wheels', pay: 150, objective: 'Steal a car', target: 'car' },
-  { name: 'Harbour Escape', pay: 300, objective: 'Reach the marina', target: 'marina' },
-  { name: 'City Taxi', pay: 250, objective: 'Pick up the fare at Palm Plaza', target: 'plaza', timer: 90 },
-  { name: 'Sunset Courier', pay: 400, objective: 'Deliver 3 drops — 120s', target: 'drops', timer: 120 },
-  { name: 'Rooftop Leap', pay: 350, objective: 'Reach the airfield', target: 'airfield' },
-  { name: 'Lighthouse Cache', pay: 500, objective: 'Collect 5 packages at the lighthouse', target: 'lighthouse' },
+
+export const MISSIONS = [
+  { id: 'first-wheels', name: 'First Wheels', pay: 150, text: 'Steal a car' },
+  { id: 'harbour-escape', name: 'Harbour Escape', pay: 300, text: 'Reach the marina by boat' },
+  { id: 'city-taxi', name: 'City Taxi', pay: 250, text: 'Pick up the fare at Palm Plaza', timer: 90 },
+  { id: 'sunset-courier', name: 'Sunset Courier', pay: 400, text: 'Deliver 3 drops across the city', drops: 3, timer: 120 },
+  { id: 'rooftop-leap', name: 'Rooftop Leap', pay: 350, text: 'Reach the lighthouse point' },
+  { id: 'lighthouse-cache', name: 'Lighthouse Cache', pay: 500, text: 'Collect 5 packages at the lighthouse', packages: 5 },
 ];
-export const FARES = [120, 150, 140]; // repeatable taxi fares after the story
-export const PRICES = { repair: 50, engine: 400, armor: 300 };
-export const GARAGE_POS = { x: 0, z: 120 };
-export const PLAZA_POS = { x: -20, z: 0 };
-export const LIGHTHOUSE_POS = { x: 178, z: 0 };
-export const MARINA_POS = { x: 120, z: -120 };
-export const AIRFIELD_POS = { x: -120, z: 120 };
+
+export const TAXI_FARES = [120, 150, 140];
+export const GARAGE_PRICES = { repair: 50, engine: 400, armor: 300 };
+export const VEHICLE_TOP_SPEEDS = { sedan: 32, pickup: 30, bike: 34, boat: 22, police: 33 };

@@ -1,42 +1,52 @@
-// peds.js — 18 pedestrians strolling the sidewalks in the rain.
-import THREE from './three-shim.js';
+// Pedestrians: 18 people walking the foggy sidewalks.
+import THREE from 'three';
+import { makeRng } from './rng.js';
+import { LAYOUT_SEED, PLAZA } from './config.js';
 
-const SHIRTS = [0xc04040, 0x4060c0, 0xc0a040, 0x40a060, 0x8040a0, 0xc06080];
+const SHIRTS = [0xc0392b, 0x2e6f8e, 0xd8a03c, 0x5a7a4a, 0x8e44ad, 0xd8dee2];
 
-export function makePeds(scene, rand) {
+export function makePeds(scene, count = 18) {
+  const rng = makeRng(LAYOUT_SEED + 11);
   const peds = [];
-  for (let i = 0; i < 18; i++) {
+  for (let i = 0; i < count; i++) {
     const g = new THREE.Group();
-    const shirt = SHIRTS[i % SHIRTS.length];
-    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.45, 1.1, 8),
-      new THREE.MeshStandardMaterial({ color: shirt, roughness: 0.9 }));
-    body.position.y = 0.85; g.add(body);
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.28, 10, 8),
-      new THREE.MeshStandardMaterial({ color: 0xd8b08a, roughness: 0.8 }));
-    head.position.y = 1.6; g.add(head);
-    const legs = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.3),
-      new THREE.MeshStandardMaterial({ color: 0x222226, roughness: 0.9 }));
-    legs.position.y = 0.25; g.add(legs);
-    const x = (rand() - 0.5) * 260, z = (rand() - 0.5) * 260;
+    const body = new THREE.Mesh(
+      new THREE.BoxGeometry(0.55, 0.9, 0.35),
+      new THREE.MeshLambertMaterial({ color: rng.pick(SHIRTS) })
+    );
+    body.position.y = 0.95;
+    g.add(body);
+    const head = new THREE.Mesh(
+      new THREE.SphereGeometry(0.24, 10, 10),
+      new THREE.MeshLambertMaterial({ color: 0xd8b08a })
+    );
+    head.position.y = 1.6;
+    g.add(head);
+    const legs = new THREE.Mesh(
+      new THREE.BoxGeometry(0.5, 0.55, 0.3),
+      new THREE.MeshLambertMaterial({ color: 0x2c343c })
+    );
+    legs.position.y = 0.28;
+    g.add(legs);
+    const nearPlaza = i < 6;
+    const x = nearPlaza ? PLAZA.x + rng.range(-14, 14) : rng.range(-120, 160);
+    const z = nearPlaza ? PLAZA.z + rng.range(-14, 14) : rng.range(-160, 160);
     g.position.set(x, 0, z);
     scene.add(g);
-    peds.push({ g, dir: rand() * Math.PI * 2, speed: 1 + rand() * 1.2, bob: rand() * 6 });
+    peds.push({ group: g, x, z, heading: rng.range(0, Math.PI * 2), speed: rng.range(0.8, 1.6), t: rng.range(0, 10) });
   }
-  return {
-    peds,
-    update(dt, t) {
-      if (dt <= 0) return;
-      for (const p of peds) {
-        p.g.position.x += Math.sin(p.dir) * p.speed * dt;
-        p.g.position.z += Math.cos(p.dir) * p.speed * dt;
-        p.g.rotation.y = p.dir;
-        p.g.position.y = Math.abs(Math.sin(t * 4 + p.bob)) * 0.06;
-        if (Math.abs(p.g.position.x) > 145 || Math.abs(p.g.position.z) > 145 || p.g.position.x > 145) {
-          p.dir = Math.random() * Math.PI * 2;
-          p.g.position.x = Math.max(-140, Math.min(140, p.g.position.x));
-          p.g.position.z = Math.max(-140, Math.min(140, p.g.position.z));
-        }
-      }
-    },
-  };
+  return peds;
+}
+
+export function updatePeds(peds, dt) {
+  for (const p of peds) {
+    p.t -= dt;
+    if (p.t <= 0) { p.heading = Math.random() * Math.PI * 2; p.t = 3 + Math.random() * 6; }
+    p.x += Math.sin(p.heading) * p.speed * dt;
+    p.z += Math.cos(p.heading) * p.speed * dt;
+    p.x = Math.max(-140, Math.min(190, p.x));
+    p.z = Math.max(-190, Math.min(190, p.z));
+    p.group.position.set(p.x, 0, p.z);
+    p.group.rotation.y = p.heading;
+  }
 }

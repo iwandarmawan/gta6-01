@@ -1,5 +1,6 @@
-// three-shim.js — the vendored three.min.js is the UMD build: it only exists as
-// globalThis.THREE after the classic <script> in index.html runs. Re-export it
-// as the default export so modules can `import THREE from './three-shim.js'`.
+// The vendored three.min.js is the UMD build: `import * as THREE from 'three'`
+// via an import map gives an empty namespace. This shim re-exports the global
+// THREE (loaded by the classic <script> tag in index.html) as the default
+// export, so every module does `import THREE from 'three'` instead.
 const THREE = globalThis.THREE;
 export default THREE;

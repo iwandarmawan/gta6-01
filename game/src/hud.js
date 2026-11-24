@@ -1,55 +1,68 @@
-// hud.js — HUD text + minimap. The minimap canvas is vertically centered on
-// the left edge (bottom-anchored maps fall into a headless-Chromium compositing
-// hole — keep it centered).
-export function createHud(spots) {
-  const el = (id) => document.getElementById(id);
-  const minimap = el('minimap');
-  const mctx = minimap.getContext('2d');
-  let toastTimer = 0;
-  return {
-    setObjective(t) { el('objective').textContent = t; },
-    setToast(t) { el('toast').textContent = t; toastTimer = 3; },
-    update(G, dt) {
-      if (dt > 0) toastTimer = Math.max(0, toastTimer - dt);
-      el('toast').style.opacity = toastTimer > 0 ? 1 : 0;
-      const stars = '★'.repeat(G.wanted) + '☆'.repeat(5 - G.wanted);
-      el('stars').textContent = stars;
-      el('cash').textContent = '$' + Math.floor(G.cash);
-      el('health').style.width = Math.max(0, (G.health / G.maxHealth) * 100) + '%';
-      el('mode').textContent = G.mode === 'drive' ? 'W · DRIVING' : 'E · ON FOOT';
-      const spd = G.mode === 'drive' && G.vehicle ? Math.abs(G.vehicle.speed) * 3.6 : 0;
-      el('speed').textContent = Math.round(spd) + ' km/h';
-      if (G.missions.timer > 0) el('timer').textContent = Math.ceil(G.missions.timer) + 's';
-      else el('timer').textContent = '';
-      // Minimap: 150x150, world -240..240 mapped in, sea east in blue.
-      const W = 150, S = W / 480;
-      mctx.fillStyle = '#10141a'; mctx.fillRect(0, 0, W, W);
-      mctx.fillStyle = '#12344a'; mctx.fillRect(150 * S + 75, 0, W, W);
-      mctx.strokeStyle = '#3a4150'; mctx.lineWidth = 1;
-      for (let s = -140; s <= 140; s += 40) {
-        mctx.beginPath(); mctx.moveTo((s + 6 + 240) * S, 0); mctx.lineTo((s + 6 + 240) * S, W); mctx.stroke();
-        mctx.beginPath(); mctx.moveTo(0, (s + 6 + 240) * S); mctx.lineTo(W, (s + 6 + 240) * S); mctx.stroke();
-      }
-      const dot = (x, z, color, r) => {
-        mctx.fillStyle = color;
-        mctx.beginPath(); mctx.arc((x + 240) * S, (z + 240) * S, r, 0, Math.PI * 2); mctx.fill();
-      };
-      dot(spots.lighthouse.x, spots.lighthouse.z, '#ffffff', 3);
-      dot(spots.marina.x, spots.marina.z, '#7fd8ff', 3);
-      dot(spots.airfield.x, spots.airfield.z, '#c0c0c0', 3);
-      dot(spots.plaza.x, spots.plaza.z, '#ffd24a', 3);
-      // Mission beacon ring.
-      const tp = G.missionTarget;
-      if (tp) {
-        mctx.strokeStyle = '#ffd24a'; mctx.lineWidth = 2;
-        mctx.beginPath(); mctx.arc((tp.x + 240) * S, (tp.z + 240) * S, 6, 0, Math.PI * 2); mctx.stroke();
-      }
-      for (const p of G.police.cars) dot(p.v.group.position.x, p.v.group.position.z, '#ff4040', 2.5);
-      // Player arrow.
-      const px = (G.playerPos.x + 240) * S, pz = (G.playerPos.z + 240) * S;
-      mctx.fillStyle = '#ffffff';
-      mctx.beginPath();
-      mctx.moveTo(px, pz - 5); mctx.lineTo(px + 4, pz + 4); mctx.lineTo(px - 4, pz + 4); mctx.closePath(); mctx.fill();
-    },
+// HUD: wanted stars, cash, health, objective, speed, timer and a minimap
+// canvas pinned vertically centered on the left edge (bottom-anchored HUD
+// falls into a headless-Chromium compositing hole — keep it centered).
+import { wantedStars } from './police.js';
+import { SEA_EDGE } from './config.js';
+
+export function makeHud() {
+  const hud = document.getElementById('hud');
+  const els = {
+    stars: document.getElementById('hud-stars'),
+    cash: document.getElementById('hud-cash'),
+    health: document.getElementById('hud-health-bar'),
+    objective: document.getElementById('hud-objective'),
+    timer: document.getElementById('hud-timer'),
+    speed: document.getElementById('hud-speed'),
+    state: document.getElementById('hud-state'),
   };
+  const map = document.getElementById('minimap');
+  const mctx = map.getContext('2d');
+  return { hud, els, map, mctx };
+}
+
+export function updateHud(h, s) {
+  h.els.stars.textContent = wantedStars(s.wanted);
+  h.els.cash.textContent = '$' + s.cash;
+  h.els.health.style.width = Math.max(0, Math.min(100, s.health)) + '%';
+  h.els.objective.textContent = s.objective;
+  h.els.timer.textContent = s.timer > 0 ? Math.ceil(s.timer) + 's' : '';
+  h.els.speed.textContent = Math.round(Math.abs(s.speed) * 2.4) + ' km/h';
+  h.els.state.textContent = s.stateLabel || '';
+  drawMinimap(h, s);
+}
+
+function drawMinimap(h, s) {
+  const c = h.mctx, W = h.map.width, H = h.map.height;
+  const scale = W / 440;
+  const px = (x) => (x + 220) * scale;
+  const pz = (z) => (z + 220) * scale;
+  c.clearRect(0, 0, W, H);
+  c.fillStyle = '#10161c';
+  c.fillRect(0, 0, W, H);
+  // Sea, west.
+  c.fillStyle = '#2e4a5e';
+  c.fillRect(0, 0, px(SEA_EDGE) , H);
+  // Roads.
+  c.strokeStyle = '#3a444e';
+  c.lineWidth = 2;
+  for (let i = -4; i <= 4; i++) {
+    const p = i * 44 - 4;
+    c.beginPath(); c.moveTo(px(p), 0); c.lineTo(px(p), H); c.stroke();
+    c.beginPath(); c.moveTo(0, pz(p)); c.lineTo(W, pz(p)); c.stroke();
+  }
+  // Lighthouse + beacon.
+  c.fillStyle = '#fff2c0';
+  c.beginPath(); c.arc(px(-178), pz(0), 4, 0, Math.PI * 2); c.fill();
+  c.strokeStyle = '#ffc94d';
+  c.beginPath(); c.arc(px(s.target.x), pz(s.target.z), 7, 0, Math.PI * 2); c.stroke();
+  // Police dots.
+  c.fillStyle = '#3a7bff';
+  for (const p of s.police || []) { c.beginPath(); c.arc(px(p.x), pz(p.z), 2.5, 0, Math.PI * 2); c.fill(); }
+  // Player arrow.
+  c.save();
+  c.translate(px(s.player.x), pz(s.player.z));
+  c.rotate(-s.player.heading);
+  c.fillStyle = '#ffffff';
+  c.beginPath(); c.moveTo(0, -6); c.lineTo(4, 5); c.lineTo(-4, 5); c.closePath(); c.fill();
+  c.restore();
 }

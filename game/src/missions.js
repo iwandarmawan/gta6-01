@@ -1,84 +1,109 @@
-// missions.js — the 6-mission story for Rico Marlowe / Vera Costa, plus
-// repeatable taxi fares after the story. updateMissions is never called in
-// frozen shot mode (shots.js sets phase 'done' so staging is never overwritten).
-import { MISSION_DEFS, FARES } from './config.js';
+// Missions and story: Rico Marlowe runs jobs for Vera Costa across Solmar
+// Bay. Six story missions plus repeatable taxi fares; garage progression
+// (repair / engine / armor) is bought with mission cash.
+import THREE from 'three';
+import { MISSIONS, TAXI_FARES, GARAGE_PRICES, PLAZA, LIGHTHOUSE, MARINA, GARAGE, AIRFIELD } from './config.js';
 
-export function createMissions() {
-  return {
-    index: 0, phase: 'active', timer: 0, dropsLeft: 0, fareIndex: 0,
-    objective: MISSION_DEFS[0].objective,
-    current: MISSION_DEFS[0],
-    storyDone: false,
+const TARGETS = {
+  'first-wheels': () => ({ x: PLAZA.x + 4, z: PLAZA.z + 6, text: 'Steal a car' }),
+  'harbour-escape': () => ({ x: MARINA.x, z: MARINA.z, text: 'Reach the marina by boat' }),
+  'city-taxi': () => ({ x: PLAZA.x, z: PLAZA.z, text: 'Pick up the fare at Palm Plaza', timer: 90 }),
+  'sunset-courier': () => ({ x: AIRFIELD.x, z: AIRFIELD.z, text: 'Deliver 3 drops across the city', timer: 120 }),
+  'rooftop-leap': () => ({ x: LIGHTHOUSE.x + 12, z: LIGHTHOUSE.z, text: 'Reach the lighthouse point' }),
+  'lighthouse-cache': () => ({ x: LIGHTHOUSE.x + 8, z: LIGHTHOUSE.z + 4, text: 'Collect 5 packages at the lighthouse' }),
+};
+
+export function makeMissions(scene) {
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(2.2, 3, 32),
+    new THREE.MeshBasicMaterial({ color: 0xffc94d, transparent: true, opacity: 0.9, side: THREE.DoubleSide })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.1;
+  scene.add(ring);
+  const state = {
+    index: 0,
+    phase: 'active', // active | done
+    cash: 0,
+    dropsDone: 0,
+    packagesDone: 0,
+    timer: 0,
+    fareIndex: 0,
+    upgrades: { engine: false, armor: false },
+    health: 100,
+    ring,
   };
+  setTarget(state, MISSIONS[0]);
+  return state;
 }
 
-export function missionTargetPos(m, spots) {
-  if (m.storyDone) return spots.plaza;
-  const t = m.current.target;
-  if (t === 'car') return null; // any car: objective completes on entering one
-  if (t === 'marina') return spots.marina;
-  if (t === 'plaza') return spots.plaza;
-  if (t === 'drops') return spots.garage; // courier drops run through the garage district
-  if (t === 'airfield') return spots.airfield;
-  if (t === 'lighthouse') return spots.lighthouse;
-  return spots.plaza;
+export function setTarget(state, mission) {
+  const t = TARGETS[mission.id]();
+  state.target = { x: t.x, z: t.z };
+  state.objective = t.text;
+  state.timer = t.timer || 0;
+  state.ring.position.set(t.x, 0.1, t.z);
 }
 
-function advance(m, spots) {
-  if (m.storyDone) {
-    m.fareIndex = (m.fareIndex + 1) % FARES.length;
-    m.objective = 'Taxi fare — drop the passenger at Palm Plaza ($' + FARES[m.fareIndex] + ')';
-    return;
+export function currentMission(state) {
+  return MISSIONS[Math.min(state.index, MISSIONS.length - 1)];
+}
+
+export function completeMission(state) {
+  const m = currentMission(state);
+  state.cash += m.pay;
+  state.phase = 'done';
+  state.index = Math.min(state.index + 1, MISSIONS.length - 1);
+  state.dropsDone = 0;
+  state.packagesDone = 0;
+  if (state.index < MISSIONS.length) setTarget(state, MISSIONS[state.index]);
+  state.phase = 'active';
+  return m;
+}
+
+export function startTaxiFare(state) {
+  const fare = TAXI_FARES[state.fareIndex % TAXI_FARES.length];
+  state.fareIndex += 1;
+  state.objective = 'Pick up the fare at Palm Plaza — 90s';
+  state.timer = 90;
+  state.target = { x: PLAZA.x, z: PLAZA.z };
+  state.ring.position.set(PLAZA.x, 0.1, PLAZA.z);
+  return fare;
+}
+
+export function buyUpgrade(state, kind) {
+  const price = GARAGE_PRICES[kind];
+  if (kind === 'repair') {
+    if (state.cash < price) return false;
+    state.cash -= price;
+    state.health = 100;
+    return true;
   }
-  m.index += 1;
-  if (m.index >= MISSION_DEFS.length) {
-    m.storyDone = true;
-    m.fareIndex = 0;
-    m.objective = 'Taxi fare — drop the passenger at Palm Plaza ($' + FARES[0] + ')';
-    m.current = null;
-    return;
-  }
-  m.current = MISSION_DEFS[m.index];
-  m.objective = m.current.objective;
-  m.timer = m.current.timer || 0;
-  m.dropsLeft = m.current.target === 'drops' ? 3 : 0;
+  if (state.cash < price || state.upgrades[kind]) return false;
+  state.cash -= price;
+  state.upgrades[kind] = true;
+  if (kind === 'armor') state.health = Math.min(150, state.health + 50);
+  return true;
 }
 
-export function updateMissions(m, playerPos, dt, spots, events) {
-  if (m.phase !== 'active' || dt <= 0) return;
-  if (m.timer > 0) {
-    m.timer -= dt;
-    if (m.timer <= 0) { // out of time: retry the same mission
-      m.timer = m.current.timer || 0;
-      events.toast('Too slow — try again, Rico.');
-      return;
+export function updateMissions(state, playerPos, dt) {
+  if (state.timer > 0) state.timer = Math.max(0, state.timer - dt);
+  const d = Math.hypot(playerPos.x - state.target.x, playerPos.z - state.target.z);
+  if (d < 5) {
+    const m = currentMission(state);
+    if (m.id === 'sunset-courier') {
+      state.dropsDone += 1;
+      if (state.dropsDone >= 3) completeMission(state);
+      else state.objective = `Deliver 3 drops across the city (${state.dropsDone}/3)`;
+    } else if (m.id === 'lighthouse-cache') {
+      state.packagesDone += 1;
+      if (state.packagesDone >= 5) completeMission(state);
+      else state.objective = `Collect 5 packages at the lighthouse (${state.packagesDone}/5)`;
+    } else {
+      completeMission(state);
     }
   }
-  const target = missionTargetPos(m, spots);
-  if (!target) return; // 'car' mission completes on entering a vehicle
-  const d = Math.hypot(playerPos.x - target.x, playerPos.z - target.z);
-  const reach = m.current && m.current.target === 'lighthouse' ? 10 : 8;
-  if (d < reach) {
-    if (m.current && m.current.target === 'drops') {
-      m.dropsLeft -= 1;
-      if (m.dropsLeft > 0) {
-        m.objective = 'Deliver ' + m.dropsLeft + ' more drop' + (m.dropsLeft > 1 ? 's' : '') + ' — 120s';
-        events.toast('Drop delivered. ' + m.dropsLeft + ' to go.');
-        return;
-      }
-    }
-    const pay = m.storyDone ? FARES[m.fareIndex] : (m.current ? m.current.pay : 0);
-    events.cash(pay);
-    events.toast((m.storyDone ? 'Fare complete' : m.current.name + ' complete') + ' — +$' + pay);
-    advance(m, spots);
-  }
-}
-
-export function completeCarMission(m, events) {
-  if (m.phase !== 'active' || m.storyDone) return;
-  if (m.current && m.current.target === 'car') {
-    events.cash(m.current.pay);
-    events.toast(m.current.name + ' complete — +$' + m.current.pay);
-    advance(m, null);
-  }
+  // Beacon ring pulse.
+  const s = 1 + Math.sin(Date.now() * 0.003) * 0.12;
+  state.ring.scale.set(s, s, 1);
 }

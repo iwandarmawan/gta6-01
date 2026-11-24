@@ -1,107 +1,126 @@
-// shots.js — scripted screenshot staging for seed=4. The game renders these
-// states through its own code; nothing is faked. Rules learned from rounds
-// 12–13: in shot mode dt is frozen at 0, the menu is hidden, missions are set
-// to phase 'done' so updateMissions never overwrites the staged objective,
-// and the chase camera / heli updates are skipped so staged positions survive.
-import THREE from './three-shim.js';
+// Shot staging: scripted game states for the four screenshots (?shot=…).
+// Every shot is staged through the game's own objects — camera, wanted
+// level, mission, vehicles, police, heli — then frozen (dt = 0), so the
+// headless capture sees exactly what a player would see mid-game.
+// Round-14 fixes applied here: the cover sedan is LARGE and fully in frame,
+// and the mission skiff reads as a boat on open water (no road beneath it).
+import THREE from 'three';
+import { LIGHTHOUSE, PLAZA, MARINA } from './config.js';
 
-export function shotName() {
-  try { return new URLSearchParams(location.search).get('shot'); }
-  catch (e) { return null; }
+function wakeTrail(scene) {
+  const g = new THREE.Group();
+  for (let i = 0; i < 6; i++) {
+    const w = new THREE.Mesh(
+      new THREE.PlaneGeometry(1.6 - i * 0.18, 3.2),
+      new THREE.MeshBasicMaterial({ color: 0xdfe9ee, transparent: true, opacity: 0.55 - i * 0.07, depthWrite: false })
+    );
+    w.rotation.x = -Math.PI / 2;
+    w.position.set(0, -0.2, -3.5 - i * 3.2);
+    g.add(w);
+  }
+  scene.add(g);
+  return g;
 }
 
-function setCam(G, px, py, pz, lx, ly, lz) {
-  G.shotCamera = { pos: new THREE.Vector3(px, py, pz), look: new THREE.Vector3(lx, ly, lz) };
-  G.camera.position.copy(G.shotCamera.pos);
-  G.camera.lookAt(G.shotCamera.look);
-}
-
-export function stageShot(G, name) {
-  G.shotMode = true;
-  G.missions.phase = 'done'; // freeze the mission system on the staged text
-  document.getElementById('menu').style.display = 'none';
-  const spots = G.spots;
+// ctx: { scene, camera, player, drivers, police, missions, hudState, traffic, peds }
+export function stageShot(ctx, name) {
+  const { scene, camera, player, drivers, police, missions } = ctx;
+  const s = ctx.hudState;
+  let camPos, camTarget;
 
   if (name === 'chase') {
-    // Storm chase on the coast road, lighthouse ahead, heli spotlight in rain.
-    G.mode = 'drive';
-    G.vehicle = G.vehicles.sedan;
-    G.player.group.visible = false;
-    const sedan = G.vehicles.sedan;
-    sedan.group.visible = true;
-    sedan.group.position.set(140, 0, -60);
-    sedan.heading = 0.56; sedan.speed = 21.4; // 77 km/h
-    sedan.group.rotation.y = sedan.heading;
-    const p1 = G.police.cars[0].v, p2 = G.police.cars[1].v;
-    p1.group.visible = true; p2.group.visible = true;
-    p1.group.position.set(148, 0, -18); p1.heading = 0.5; p1.group.rotation.y = 0.5;
-    p2.group.position.set(146, 0, 4); p2.heading = 0.6; p2.group.rotation.y = 0.6;
-    G.police.heli.position.set(152, 16, -48);
-    G.police.heli.rotation.y = 0.9;
-    G.wanted = 4;
-    G.missions.objective = 'Reach the lighthouse point';
-    G.hud.setObjective('Reach the lighthouse point');
-    G.beacon.position.set(spots.lighthouse.x, 0, spots.lighthouse.z);
-    G.beacon.visible = true;
-    G.playerPos = { x: 140, z: -60 };
-    setCam(G, 148, 12, -85, 150, 2, -40);
+    // Storm-fog chase on the coast road: sedan LARGE, fully in frame.
+    const d = drivers.sedan;
+    d.x = -120; d.z = -40; d.heading = -Math.PI / 2; d.speed = 32;
+    d.vehicle.position.set(d.x, 0, d.z);
+    d.vehicle.rotation.y = d.heading;
+    player.onFoot = false; player.vehicle = d;
+    player.x = d.x; player.z = d.z; player.heading = d.heading;
+    // Two interceptors on the sedan's tail, visible just behind it.
+    police.cars[0].x = -134; police.cars[0].z = -28; police.cars[0].heading = -Math.PI / 2;
+    police.cars[1].x = -100; police.cars[1].z = -52; police.cars[1].heading = -Math.PI / 2;
+    for (const c of police.cars) { c.vehicle.position.set(c.x, 0, c.z); c.vehicle.rotation.y = c.heading; }
+    // Helicopter overhead with its spotlight cone in the mist.
+    police.heli.visible = true;
+    police.heli.position.set(-132, 14, -28);
+    police.heli.rotation.y = 0.4;
+    s.wanted = 4;
+    s.objective = 'Reach the lighthouse point';
+    s.timer = 0;
+    s.speed = 32;
+    s.stateLabel = 'W · DRIVING';
+    // Traffic car ahead on the coast road, a ped on the sidewalk.
+    ctx.traffic[0].vehicle.position.set(-146, 0, -8);
+    ctx.peds[0].group.position.set(-136, 0, -58);
+    ctx.peds[1].group.position.set(-138, 0, -20);
+    // Camera close and low behind the sedan so it fills the frame.
+    camPos = [-110, 3.5, -48];
+    camTarget = [-124, 1, -40];
   } else if (name === 'play') {
-    // On foot at Palm Plaza in the rain, red sedan under the beacon.
-    G.mode = 'foot';
-    G.vehicle = null;
-    G.player.group.visible = true;
-    G.player.group.position.set(-24, 0, 10);
-    G.player.heading = 0.9;
-    G.player.group.rotation.y = 0.9;
-    const sedan = G.vehicles.sedan;
-    sedan.group.visible = true;
-    sedan.group.position.set(-12, 0, 2);
-    sedan.heading = 2.2; sedan.group.rotation.y = 2.2;
-    G.wanted = 0;
-    G.missions.objective = 'Steal a car (walk up and press E)';
-    G.hud.setObjective('Steal a car (walk up and press E)');
-    G.beacon.position.set(-12, 0, 2);
-    G.beacon.visible = true;
-    G.playerPos = { x: -24, z: 10 };
-    setCam(G, -34, 8, 26, -12, 1.5, 0);
+    // On foot at Palm Plaza in the fog, beacon pillar over the red sedan.
+    player.onFoot = true; player.vehicle = null;
+    player.x = 2; player.z = 8; player.heading = Math.PI * 0.85;
+    const d = drivers.sedan;
+    d.x = 8; d.z = 10; d.heading = 0.4; d.speed = 0;
+    d.vehicle.position.set(d.x, 0, d.z);
+    d.vehicle.rotation.y = d.heading;
+    police.heli.visible = false;
+    s.wanted = 0;
+    s.objective = 'Steal a car';
+    s.timer = 0;
+    s.speed = 0;
+    s.stateLabel = 'E · ON FOOT';
+    ctx.peds[2].group.position.set(-6, 0, -8);
+    ctx.peds[3].group.position.set(10, 0, -6);
+    camPos = [16, 5, 20];
+    camTarget = [2, 1.4, 4];
   } else if (name === 'drive') {
-    // Orange pickup up the rain-slicked coast road, traffic ahead, taxi timer.
-    G.mode = 'drive';
-    G.vehicle = G.vehicles.pickup;
-    G.player.group.visible = false;
-    const pk = G.vehicles.pickup;
-    pk.group.visible = true;
-    pk.group.position.set(140, 0, 62);
-    pk.heading = Math.PI; pk.speed = 19.4; // 70 km/h
-    pk.group.rotation.y = Math.PI;
-    const t0 = G.traffic.cars[0].v;
-    t0.group.position.set(140, 0, 18); t0.heading = Math.PI; t0.group.rotation.y = Math.PI;
-    G.wanted = 0;
-    G.missions.objective = 'Pick up the fare at Palm Plaza';
-    G.missions.timer = 90;
-    G.hud.setObjective('Pick up the fare at Palm Plaza');
-    G.beacon.position.set(spots.plaza.x, 0, spots.plaza.z);
-    G.beacon.visible = true;
-    G.playerPos = { x: 140, z: 62 };
-    setCam(G, 147, 7, 86, 140, 2, 20);
+    // Orange pickup up the foggy coast road, lighthouse beam to the left.
+    const d = drivers.pickup;
+    d.x = -142; d.z = 44; d.heading = Math.PI; d.speed = 29;
+    d.vehicle.position.set(d.x, 0, d.z);
+    d.vehicle.rotation.y = d.heading;
+    player.onFoot = false; player.vehicle = d;
+    player.x = d.x; player.z = d.z; player.heading = d.heading;
+    police.heli.visible = false;
+    ctx.traffic[1].vehicle.position.set(-142, 0, 8);
+    ctx.traffic[1].vehicle.rotation.y = Math.PI;
+    s.wanted = 0;
+    s.objective = 'Pick up the fare at Palm Plaza — 90s';
+    s.timer = 90;
+    s.speed = 29;
+    s.stateLabel = 'W · DRIVING';
+    // Camera close behind the pickup so it fills the frame.
+    camPos = [-139, 4, 56];
+    camTarget = [-143, 1.2, 36];
+  } else if (name === 'mission') {
+    // Skiff on OPEN WATER west of the coast — wake behind it, lighthouse
+    // beam ahead, no road anywhere beneath it.
+    const d = drivers.boat;
+    d.x = -175; d.z = 46; d.heading = Math.PI; d.speed = 16;
+    d.vehicle.position.set(d.x, -0.15, d.z);
+    d.vehicle.rotation.y = d.heading;
+    player.onFoot = false; player.vehicle = d;
+    player.x = d.x; player.z = d.z; player.heading = d.heading;
+    const wake = wakeTrail(scene);
+    wake.position.set(d.x, 0, d.z);
+    wake.rotation.y = d.heading;
+    police.heli.visible = false;
+    s.wanted = 2;
+    s.objective = 'Reach the lighthouse point';
+    s.timer = 0;
+    s.speed = 16;
+    s.stateLabel = 'W · DRIVING';
+    camPos = [-167, 4.5, 58];
+    camTarget = [-177, 0.5, 38];
   } else {
-    // Mission: skiff in open storm water heading for the lighthouse.
-    G.mode = 'drive';
-    G.vehicle = G.vehicles.skiff;
-    G.player.group.visible = false;
-    const sk = G.vehicles.skiff;
-    sk.group.visible = true;
-    sk.group.position.set(166, 0.1, 62);
-    sk.heading = 2.93; sk.speed = 10.5; // 38 km/h
-    sk.group.rotation.y = 2.93;
-    G.wanted = 2;
-    G.missions.objective = 'Reach the lighthouse point';
-    G.hud.setObjective('Reach the lighthouse point');
-    G.beacon.position.set(spots.lighthouse.x, 0, spots.lighthouse.z);
-    G.beacon.visible = true;
-    G.playerPos = { x: 166, z: 62 };
-    setCam(G, 178, 5, 84, 168, 1, 45);
+    camPos = [20, 14, 30];
+    camTarget = [0, 1, 0];
   }
-  G.hud.update(G, 0);
-  document.getElementById('status').textContent = 'ready';
+
+  camera.position.set(camPos[0], camPos[1], camPos[2]);
+  camera.lookAt(camTarget[0], camTarget[1], camTarget[2]);
+  // Keep the mission beacon ring on the current objective.
+  missions.ring.position.set(missions.target.x, 0.1, missions.target.z);
+  return { camPos, camTarget };
 }

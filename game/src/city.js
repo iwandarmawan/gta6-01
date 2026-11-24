@@ -1,245 +1,254 @@
-// city.js — builds Solmar Bay in a rainstorm: wet grid streets, lit towers,
-// palms, lamps, lighthouse, marina, airfield, puddles, storm clouds, rain and
-// lightning. Returns colliders and the named spots the missions use.
-import THREE from './three-shim.js';
-import { WORLD, STORM, PLAZA_POS, LIGHTHOUSE_POS, MARINA_POS, AIRFIELD_POS, GARAGE_POS } from './config.js';
+// Solmar Bay — Foggy Morning: builds the city, the sea, the lighthouse,
+// the marina, the airfield and the fog itself.
+import THREE from 'three';
+import { COLORS, SEA_EDGE, PLAZA, GARAGE, LIGHTHOUSE, MARINA, AIRFIELD, LAYOUT_SEED, GRID_OFFSET } from './config.js';
+import { makeRng } from './rng.js';
 
-function windowTexture(rand, base) {
-  const c = document.createElement('canvas'); c.width = 64; c.height = 128;
+// Canvas texture: a tower face with lit windows glowing through the fog.
+function windowTexture(rng, warm) {
+  const c = document.createElement('canvas');
+  c.width = 64; c.height = 128;
   const g = c.getContext('2d');
-  g.fillStyle = base; g.fillRect(0, 0, 64, 128);
-  for (let y = 6; y < 122; y += 10) {
-    for (let x = 6; x < 58; x += 10) {
-      const lit = rand() < 0.55;
-      g.fillStyle = lit ? (rand() < 0.8 ? '#ffd98a' : '#9fd8ff') : '#1a2028';
-      g.fillRect(x, y, 6, 7);
+  g.fillStyle = '#3d4750';
+  g.fillRect(0, 0, 64, 128);
+  for (let y = 6; y < 122; y += 12) {
+    for (let x = 6; x < 58; x += 12) {
+      const lit = rng.next();
+      if (lit < 0.55) {
+        g.fillStyle = warm && rng.next() < 0.7 ? '#ffd98a' : '#9fc4e8';
+        g.globalAlpha = 0.65 + rng.next() * 0.35;
+      } else {
+        g.fillStyle = '#20262c';
+        g.globalAlpha = 1;
+      }
+      g.fillRect(x, y, 7, 8);
     }
   }
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  return t;
+  g.globalAlpha = 1;
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
 }
 
-function box(w, h, d, color, x, y, z, opts) {
-  const m = new THREE.Mesh(
-    new THREE.BoxGeometry(w, h, d),
-    new THREE.MeshStandardMaterial(Object.assign({ color, roughness: 0.85, metalness: 0.05 }, opts || {}))
+export function buildCity(scene) {
+  const rng = makeRng(LAYOUT_SEED);
+  const refs = { buildings: [], colliders: [], lamps: [], trafficSpots: [] };
+
+  scene.background = new THREE.Color(COLORS.sky);
+  scene.fog = new THREE.FogExp2(COLORS.fog, 0.011);
+
+  scene.add(new THREE.HemisphereLight(0xcfd8de, 0x2a3138, 0.9));
+  const sun = new THREE.DirectionalLight(0xffe8c0, 0.7);
+  sun.position.set(60, 120, -40);
+  scene.add(sun);
+
+  // Ground — wet asphalt-grey, still dark from the night's rain. It covers
+  // only the land (x >= SEA_EDGE): the sea plane sits below it, and a
+  // ground plane spanning the sea would hide the water entirely.
+  const ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(410, 520),
+    new THREE.MeshPhongMaterial({ color: COLORS.ground, shininess: 70, specular: 0x44505a })
   );
-  m.position.set(x, y, z);
-  return m;
-}
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.set(SEA_EDGE + 205, -0.05, 0);
+  scene.add(ground);
 
-export function buildCity(scene, rand) {
-  const colliders = [];
-  const group = new THREE.Group();
-  scene.add(group);
+  // The sea, west of the coast road: two tones, slightly below ground level.
+  const sea = new THREE.Mesh(
+    new THREE.PlaneGeometry(220, 520),
+    new THREE.MeshPhongMaterial({ color: COLORS.sea, shininess: 90, specular: 0x5a7286 })
+  );
+  sea.rotation.x = -Math.PI / 2;
+  sea.position.set(SEA_EDGE - 110, -0.35, 0);
+  scene.add(sea);
+  const seaDeep = new THREE.Mesh(
+    new THREE.PlaneGeometry(60, 520),
+    new THREE.MeshPhongMaterial({ color: COLORS.seaDeep, shininess: 90, specular: 0x4a6072 })
+  );
+  seaDeep.rotation.x = -Math.PI / 2;
+  seaDeep.position.set(SEA_EDGE - 250, -0.5, 0);
+  scene.add(seaDeep);
 
-  // Ground + sea (sea east of WORLD.seaX).
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(WORLD.size, WORLD.size),
-    new THREE.MeshStandardMaterial({ color: STORM.ground, roughness: 0.95 }));
-  ground.rotation.x = -Math.PI / 2; ground.position.set(0, 0, 0); group.add(ground);
-  const sea = new THREE.Mesh(new THREE.PlaneGeometry(WORLD.size - WORLD.seaX, WORLD.size),
-    new THREE.MeshStandardMaterial({ color: 0x1a3a52, roughness: 0.15, metalness: 0.35 }));
-  sea.rotation.x = -Math.PI / 2; sea.position.set(WORLD.seaX + (WORLD.size - WORLD.seaX) / 2, 0.05, 0); group.add(sea);
-
-  // Streets: grid offset by the round-14 seed so the map reads differently.
-  const off = 6; // grid offset (v13 used 0, v12 used -6)
-  const streets = [];
-  for (let s = WORLD.streetMin; s <= WORLD.streetMax; s += WORLD.streetStep) streets.push(s + off);
-  const roadMat = new THREE.MeshStandardMaterial({ color: STORM.roadWet, roughness: 0.35, metalness: 0.25 });
-  const dashMat = new THREE.MeshBasicMaterial({ color: 0x8a8f96 });
-  for (const s of streets) {
-    const h = new THREE.Mesh(new THREE.PlaneGeometry(WORLD.size - WORLD.seaX + 40, WORLD.roadW), roadMat);
-    h.rotation.x = -Math.PI / 2; h.position.set((WORLD.seaX - 40) / 2, 0.08, s); group.add(h);
-    const v = new THREE.Mesh(new THREE.PlaneGeometry(WORLD.roadW, WORLD.size), roadMat);
-    v.rotation.x = -Math.PI / 2; v.position.set(s, 0.08, 0); group.add(v);
-    for (let d = -160; d <= 160; d += 16) {
-      const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 3), dashMat);
-      dash.rotation.x = -Math.PI / 2; dash.position.set(d, 0.1, s); group.add(dash);
-      const dash2 = new THREE.Mesh(new THREE.PlaneGeometry(3, 0.5), dashMat);
-      dash2.rotation.x = -Math.PI / 2; dash2.position.set(s, 0.1, d); group.add(dash2);
+  // Street grid — wet roads with pale lane markings, offset by GRID_OFFSET.
+  // No road may cross the sea: vertical roads west of the coast are skipped
+  // and horizontal roads are clipped to start at the sea wall.
+  const roadMat = new THREE.MeshPhongMaterial({ color: 0x262c32, shininess: 90, specular: 0x55606a });
+  const lineMat = new THREE.MeshBasicMaterial({ color: COLORS.roadLine });
+  const roads = [];
+  for (let i = -4; i <= 4; i++) {
+    const p = i * 44 + GRID_OFFSET;
+    if (p >= SEA_EDGE + 14) roads.push({ x: p, z: 0, w: 10, vertical: true });
+    roads.push({ x: 0, z: p, w: 10, vertical: false });
+  }
+  for (const r of roads) {
+    const len = r.vertical ? 400 : 350;
+    const cx = r.vertical ? r.x : SEA_EDGE + len / 2;
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(r.vertical ? r.w : len, r.vertical ? len : r.w), roadMat);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.set(cx, 0.02, r.z);
+    scene.add(mesh);
+    // Dashed centre line.
+    for (let d = -180; d < 180; d += 16) {
+      if (!r.vertical && d < SEA_EDGE + 10) continue;
+      const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 5), lineMat);
+      dash.rotation.x = -Math.PI / 2;
+      if (r.vertical) dash.position.set(r.x, 0.04, d);
+      else { dash.rotation.z = Math.PI / 2; dash.position.set(d, 0.04, r.z); }
+      scene.add(dash);
     }
   }
+  // Coast road along the sea wall.
+  const coast = new THREE.Mesh(new THREE.PlaneGeometry(10, 400), roadMat);
+  coast.rotation.x = -Math.PI / 2;
+  coast.position.set(SEA_EDGE + 8, 0.02, 0);
+  scene.add(coast);
 
-  // Buildings: blocks between streets, lit windows glowing through the rain.
-  const texes = STORM.building.map((c) => windowTexture(rand, '#' + c.toString(16).padStart(6, '0')));
-  for (let gx = 0; gx < streets.length - 1; gx++) {
-    for (let gz = 0; gz < streets.length - 1; gz++) {
-      const cx = (streets[gx] + streets[gx + 1]) / 2;
-      const cz = (streets[gz] + streets[gz + 1]) / 2;
-      if (cx > WORLD.seaX - 20) continue;              // no buildings in the sea
-      if (Math.abs(cx - PLAZA_POS.x) < 24 && Math.abs(cz - PLAZA_POS.z) < 24) continue; // plaza
-      if (Math.abs(cx - AIRFIELD_POS.x) < 45 && Math.abs(cz - AIRFIELD_POS.z) < 35) continue; // airfield
-      if (Math.abs(cx - GARAGE_POS.x) < 20 && Math.abs(cz - GARAGE_POS.z) < 18) continue; // garage
-      if (rand() < 0.22) continue;                      // empty lot / park
-      const w = 14 + rand() * 12, d = 14 + rand() * 12, h = 8 + rand() * 24;
-      const tex = texes[Math.floor(rand() * texes.length)];
-      const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, d),
-        new THREE.MeshStandardMaterial({ map: tex, emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: 0.55, roughness: 0.9 }));
-      b.position.set(cx, h / 2, cz);
-      group.add(b);
-      colliders.push({ x: cx, z: cz, hw: w / 2, hd: d / 2 });
-      if (rand() < 0.35) { // rooftop beacon light
-        const tip = new THREE.Mesh(new THREE.SphereGeometry(0.5, 8, 8),
-          new THREE.MeshBasicMaterial({ color: 0xff4444 }));
-        tip.position.set(cx, h + 0.6, cz); group.add(tip);
-      }
-    }
+  // Towers — muted blue-grey blocks, windows lit against the fog.
+  const texWarm = windowTexture(rng, true);
+  const texCool = windowTexture(rng, false);
+  const blocks = [];
+  for (let i = 0; i < 42; i++) {
+    const bx = Math.round(rng.range(-3, 3)) * 44 + GRID_OFFSET + rng.range(-8, 8);
+    const bz = Math.round(rng.range(-3, 3)) * 44 + GRID_OFFSET + rng.range(-8, 8);
+    if (bx < SEA_EDGE + 14) continue; // keep the coast clear
+    if (Math.abs(bx - PLAZA.x) < 18 && Math.abs(bz - PLAZA.z) < 18) continue; // keep the plaza open
+    if (Math.abs(bx - GARAGE.x) < 14 && Math.abs(bz - GARAGE.z) < 14) continue;
+    if (Math.abs(bx - AIRFIELD.x) < 30 && Math.abs(bz - AIRFIELD.z) < 22) continue;
+    blocks.push({ x: bx, z: bz, w: rng.range(10, 18), d: rng.range(10, 18), h: rng.range(14, 46) });
+  }
+  for (const b of blocks) {
+    const mat = new THREE.MeshLambertMaterial({ map: rng.next() < 0.5 ? texWarm : texCool });
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(b.w, b.h, b.d), mat);
+    mesh.position.set(b.x, b.h / 2, b.z);
+    scene.add(mesh);
+    refs.buildings.push(mesh);
+    refs.colliders.push({ x: b.x, z: b.z, hw: b.w / 2 + 1, hd: b.d / 2 + 1 });
   }
 
-  // Palm Plaza: fountain, palms, beacon pillar base.
-  const fountain = new THREE.Mesh(new THREE.CylinderGeometry(7, 8, 1.2, 20),
-    new THREE.MeshStandardMaterial({ color: 0x9aa0a8, roughness: 0.6 }));
-  fountain.position.set(PLAZA_POS.x, 0.6, PLAZA_POS.z); group.add(fountain);
-  const water = new THREE.Mesh(new THREE.CircleGeometry(6, 20),
-    new THREE.MeshStandardMaterial({ color: 0x2a5a7a, roughness: 0.1, metalness: 0.4 }));
-  water.rotation.x = -Math.PI / 2; water.position.set(PLAZA_POS.x, 1.25, PLAZA_POS.z); group.add(water);
+  // Palm Plaza — fountain, palms, and the gold mission beacon pillar.
+  const fountain = new THREE.Mesh(
+    new THREE.CylinderGeometry(7, 8, 1.2, 24),
+    new THREE.MeshPhongMaterial({ color: 0x8a97a3, shininess: 60 })
+  );
+  fountain.position.set(PLAZA.x, 0.6, PLAZA.z);
+  scene.add(fountain);
+  const water = new THREE.Mesh(
+    new THREE.CircleGeometry(6.2, 24),
+    new THREE.MeshPhongMaterial({ color: 0x3a5a70, shininess: 100, specular: 0x88a8bc })
+  );
+  water.rotation.x = -Math.PI / 2;
+  water.position.set(PLAZA.x, 1.25, PLAZA.z);
+  scene.add(water);
+  const beacon = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.7, 0.7, 26, 12, 1, true),
+    new THREE.MeshBasicMaterial({ color: COLORS.beacon, transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false })
+  );
+  beacon.position.set(PLAZA.x + 4, 13, PLAZA.z);
+  scene.add(beacon);
+  refs.beacon = beacon;
 
-  // Palms along the coast road and plaza.
-  const palmSpots = [];
-  for (let z = -140; z <= 140; z += 20) { palmSpots.push([WORLD.seaX - 12, z]); palmSpots.push([-60, z]); }
-  for (let i = 0; i < 8; i++) palmSpots.push([PLAZA_POS.x + (rand() - 0.5) * 30, PLAZA_POS.z + (rand() - 0.5) * 30]);
-  for (const [px, pz] of palmSpots) {
-    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.5, 7, 6),
-      new THREE.MeshStandardMaterial({ color: 0x6a4a2a, roughness: 1 }));
-    trunk.position.set(px, 3.5, pz); group.add(trunk);
-    const top = new THREE.Mesh(new THREE.ConeGeometry(3.2, 2.5, 7),
-      new THREE.MeshStandardMaterial({ color: 0x2a5a2a, roughness: 0.9 }));
-    top.position.set(px, 8, pz); group.add(top);
+  // Palms along the plaza and the coast.
+  const trunkMat = new THREE.MeshLambertMaterial({ color: COLORS.trunk });
+  const leafMat = new THREE.MeshLambertMaterial({ color: COLORS.palm });
+  function palm(x, z, s = 1) {
+    const g = new THREE.Group();
+    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.25 * s, 0.4 * s, 7 * s, 8), trunkMat);
+    trunk.position.y = 3.5 * s;
+    g.add(trunk);
+    const crown = new THREE.Mesh(new THREE.ConeGeometry(2.6 * s, 3.4 * s, 8), leafMat);
+    crown.position.y = 8.2 * s;
+    g.add(crown);
+    g.position.set(x, 0, z);
+    scene.add(g);
   }
+  for (let i = 0; i < 10; i++) palm(PLAZA.x + Math.cos(i * 0.63) * 13, PLAZA.z + Math.sin(i * 0.63) * 13, 0.9 + rng.next() * 0.3);
+  for (let z = -160; z <= 160; z += 32) palm(SEA_EDGE + 16, z + rng.range(-4, 4), 1);
 
-  // Street lamps with warm pools of light on the wet road.
-  const lampGlow = new THREE.MeshBasicMaterial({ color: 0xffd98a });
-  const poolMat = new THREE.MeshBasicMaterial({ color: 0x8a6a30, transparent: true, opacity: 0.28 });
-  for (const s of streets) {
-    for (let d = -140; d <= 140; d += 40) {
-      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 5.5, 6),
-        new THREE.MeshStandardMaterial({ color: 0x30343a, roughness: 0.7 }));
-      pole.position.set(s + 6, 2.75, d); group.add(pole);
-      const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.35, 8, 8), lampGlow);
-      bulb.position.set(s + 6, 5.6, d); group.add(bulb);
-      const pool = new THREE.Mesh(new THREE.CircleGeometry(3.4, 16), poolMat);
-      pool.rotation.x = -Math.PI / 2; pool.position.set(s + 6, 0.12, d); group.add(pool);
-    }
+  // Street lamps — still glowing in the morning fog.
+  const lampPoleMat = new THREE.MeshLambertMaterial({ color: 0x2c343c });
+  const lampGlowMat = new THREE.MeshBasicMaterial({ color: COLORS.lampGlow });
+  function lamp(x, z) {
+    const g = new THREE.Group();
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.16, 5.4, 8), lampPoleMat);
+    pole.position.y = 2.7;
+    g.add(pole);
+    const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.42, 10, 10), lampGlowMat);
+    bulb.position.y = 5.5;
+    g.add(bulb);
+    const halo = new THREE.Mesh(
+      new THREE.SphereGeometry(1.5, 10, 10),
+      new THREE.MeshBasicMaterial({ color: COLORS.lampGlow, transparent: true, opacity: 0.14, depthWrite: false })
+    );
+    halo.position.y = 5.5;
+    g.add(halo);
+    g.position.set(x, 0, z);
+    scene.add(g);
+    refs.lamps.push(g);
   }
+  for (let z = -176; z <= 176; z += 44) { lamp(SEA_EDGE + 14, z); lamp(GRID_OFFSET + 44, z + 22); lamp(GRID_OFFSET - 44, z - 22); }
 
-  // Lighthouse on the east point, beam cutting through the storm.
+  // Rico's Garage — low block with a glowing sign band.
+  const garage = new THREE.Mesh(
+    new THREE.BoxGeometry(16, 5, 10),
+    new THREE.MeshLambertMaterial({ color: 0x7a4a2e })
+  );
+  garage.position.set(GARAGE.x, 2.5, GARAGE.z);
+  scene.add(garage);
+  refs.colliders.push({ x: GARAGE.x, z: GARAGE.z, hw: 9, hd: 6 });
+  const sign = new THREE.Mesh(
+    new THREE.BoxGeometry(16.2, 1, 0.3),
+    new THREE.MeshBasicMaterial({ color: 0xffb84d })
+  );
+  sign.position.set(GARAGE.x, 4.6, GARAGE.z + 5.1);
+  scene.add(sign);
+
+  // The lighthouse on the western point — its beam is a soft cone in the fog.
   const lh = new THREE.Group();
-  const tower = new THREE.Mesh(new THREE.CylinderGeometry(3, 4.5, 26, 12),
-    new THREE.MeshStandardMaterial({ color: 0xd8d2c4, roughness: 0.8 }));
-  tower.position.y = 13; lh.add(tower);
-  const band = new THREE.Mesh(new THREE.CylinderGeometry(3.3, 3.6, 3, 12),
-    new THREE.MeshStandardMaterial({ color: 0xb03030, roughness: 0.8 }));
-  band.position.y = 16; lh.add(band);
-  const lampRoom = new THREE.Mesh(new THREE.CylinderGeometry(2, 2, 3, 10),
-    new THREE.MeshBasicMaterial({ color: 0xfff2b0 }));
-  lampRoom.position.y = 27.5; lh.add(lampRoom);
-  const beam = new THREE.Mesh(new THREE.ConeGeometry(6, 45, 12, 1, true),
-    new THREE.MeshBasicMaterial({ color: 0xfff2b0, transparent: true, opacity: 0.10, side: THREE.DoubleSide }));
-  beam.rotation.z = Math.PI / 2 - 0.12; beam.position.set(-22, 27, 0); lh.add(beam);
-  lh.position.set(LIGHTHOUSE_POS.x, 0, LIGHTHOUSE_POS.z);
-  group.add(lh);
-  colliders.push({ x: LIGHTHOUSE_POS.x, z: LIGHTHOUSE_POS.z, hw: 5, hd: 5 });
+  const tower = new THREE.Mesh(
+    new THREE.CylinderGeometry(3, 4.2, 22, 16),
+    new THREE.MeshLambertMaterial({ color: COLORS.lighthouse })
+  );
+  tower.position.y = 11;
+  lh.add(tower);
+  const lampRoom = new THREE.Mesh(
+    new THREE.CylinderGeometry(2.2, 2.2, 3, 12),
+    new THREE.MeshBasicMaterial({ color: 0xfff2c0 })
+  );
+  lampRoom.position.y = 23;
+  lh.add(lampRoom);
+  const beam = new THREE.Mesh(
+    new THREE.ConeGeometry(7, 45, 16, 1, true),
+    new THREE.MeshBasicMaterial({ color: 0xfff2c0, transparent: true, opacity: 0.10, side: THREE.DoubleSide, depthWrite: false })
+  );
+  beam.rotation.z = Math.PI / 2;
+  beam.position.set(22, 23, 0);
+  lh.add(beam);
+  lh.position.set(LIGHTHOUSE.x, 0, LIGHTHOUSE.z);
+  scene.add(lh);
+  refs.lighthouse = lh;
+  refs.beam = beam;
+  refs.colliders.push({ x: LIGHTHOUSE.x, z: LIGHTHOUSE.z, hw: 5, hd: 5 });
 
-  // Marina north-east: docks and moored skiffs.
+  // Marina — docks reaching into the foggy water, a few moored boats.
+  const dockMat = new THREE.MeshLambertMaterial({ color: 0x6b4a2f });
   for (let i = 0; i < 3; i++) {
-    const dock = box(3, 0.8, 22, 0x5a4632, MARINA_POS.x + i * 8, 0.4, MARINA_POS.z);
-    group.add(dock);
-    const boat = box(2.4, 1, 6, 0xd8d8d8, MARINA_POS.x + i * 8 + 3.5, 0.6, MARINA_POS.z + (rand() - 0.5) * 8);
-    group.add(boat);
-  }
-  // Jetty out to the lighthouse point.
-  const jetty = box(4, 0.8, 30, 0x5a4632, 162, 0.4, 0);
-  group.add(jetty);
-
-  // Airfield south-west: runway, windsock, hangar.
-  const runway = new THREE.Mesh(new THREE.PlaneGeometry(12, 90),
-    new THREE.MeshStandardMaterial({ color: 0x1a1d22, roughness: 0.4, metalness: 0.2 }));
-  runway.rotation.x = -Math.PI / 2; runway.position.set(AIRFIELD_POS.x, 0.09, AIRFIELD_POS.z); group.add(runway);
-  const hangar = box(20, 8, 14, 0x707880, AIRFIELD_POS.x + 22, 4, AIRFIELD_POS.z);
-  group.add(hangar);
-  colliders.push({ x: AIRFIELD_POS.x + 22, z: AIRFIELD_POS.z, hw: 10, hd: 7 });
-
-  // Rico's Garage south.
-  const garage = box(16, 6, 12, 0x8a6a3a, GARAGE_POS.x, 3, GARAGE_POS.z);
-  group.add(garage);
-  const sign = new THREE.Mesh(new THREE.PlaneGeometry(12, 2),
-    new THREE.MeshBasicMaterial({ color: 0xffc040 }));
-  sign.position.set(GARAGE_POS.x, 6.5, GARAGE_POS.z - 6.2); group.add(sign);
-  colliders.push({ x: GARAGE_POS.x, z: GARAGE_POS.z, hw: 8, hd: 6 });
-
-  // Puddles: shiny discs on the wet roads.
-  const puddleMat = new THREE.MeshStandardMaterial({ color: 0x1a2a3a, roughness: 0.05, metalness: 0.5 });
-  for (let i = 0; i < 26; i++) {
-    const s = streets[Math.floor(rand() * streets.length)];
-    const d = (rand() - 0.5) * 280;
-    const p = new THREE.Mesh(new THREE.CircleGeometry(1.5 + rand() * 2.5, 14), puddleMat);
-    p.rotation.x = -Math.PI / 2;
-    p.position.set(rand() < 0.5 ? s + (rand() - 0.5) * 4 : d, 0.11, rand() < 0.5 ? d : s + (rand() - 0.5) * 4);
-    group.add(p);
+    const dock = new THREE.Mesh(new THREE.BoxGeometry(3, 0.6, 26), dockMat);
+    dock.position.set(MARINA.x + i * 8, 0.1, MARINA.z);
+    scene.add(dock);
   }
 
-  // Storm clouds: dark flattened spheres high up.
-  const cloudMat = new THREE.MeshStandardMaterial({ color: 0x1c242e, roughness: 1, transparent: true, opacity: 0.92 });
-  for (let i = 0; i < 14; i++) {
-    const c = new THREE.Mesh(new THREE.SphereGeometry(30 + rand() * 30, 10, 8), cloudMat);
-    c.scale.y = 0.28;
-    c.position.set((rand() - 0.5) * 420, 70 + rand() * 30, (rand() - 0.5) * 420);
-    group.add(c);
-  }
+  // Airfield — runway strip and a small tower, east side.
+  const runway = new THREE.Mesh(new THREE.PlaneGeometry(14, 90), new THREE.MeshPhongMaterial({ color: COLORS.runway }));
+  runway.rotation.x = -Math.PI / 2;
+  runway.position.set(AIRFIELD.x, 0.03, AIRFIELD.z);
+  scene.add(runway);
+  const atower = new THREE.Mesh(
+    new THREE.BoxGeometry(6, 18, 6),
+    new THREE.MeshLambertMaterial({ color: 0x8a97a3 })
+  );
+  atower.position.set(AIRFIELD.x + 14, 9, AIRFIELD.z - 20);
+  scene.add(atower);
+  refs.colliders.push({ x: AIRFIELD.x + 14, z: AIRFIELD.z - 20, hw: 4, hd: 4 });
 
-  // Rain: 500 falling streaks around the camera.
-  const RAIN_N = 500;
-  const rainPos = new Float32Array(RAIN_N * 6);
-  const rainGeo = new THREE.BufferGeometry();
-  rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPos, 3));
-  const rain = new THREE.LineSegments(rainGeo, new THREE.LineBasicMaterial({ color: 0x9fb4cc, transparent: true, opacity: 0.55 }));
-  rain.frustumCulled = false;
-  group.add(rain);
-  const drops = [];
-  for (let i = 0; i < RAIN_N; i++) drops.push({ x: (rand() - 0.5) * 220, y: rand() * 50, z: (rand() - 0.5) * 220 });
-
-  // Lightning bolt (hidden until a flash; a faint static one is placed far north-east).
-  const boltPts = [];
-  let bx = 0, by = 60;
-  for (let i = 0; i < 8; i++) { boltPts.push(new THREE.Vector3(bx, by, 0)); bx += (rand() - 0.5) * 8; by -= 8; }
-  const bolt = new THREE.Line(new THREE.BufferGeometry().setFromPoints(boltPts),
-    new THREE.LineBasicMaterial({ color: 0xdfeaff, transparent: true, opacity: 0 }));
-  bolt.position.set(180, 0, -190);
-  group.add(bolt);
-
-  let flashTimer = 4 + rand() * 4;
-  let flashLeft = 0;
-
-  function update(dt, t, camera, dirLight) {
-    // Rain falls; in frozen shot mode dt is 0 so the streaks hold still.
-    if (dt > 0) {
-      const cx = camera.position.x, cz = camera.position.z;
-      for (let i = 0; i < RAIN_N; i++) {
-        const d = drops[i];
-        d.y -= 42 * dt;
-        d.x += 6 * dt; // wind slant
-        if (d.y < 0) { d.y = 45 + rand() * 8; d.x = cx + (rand() - 0.5) * 220; d.z = cz + (rand() - 0.5) * 220; }
-        rainPos[i * 6] = d.x; rainPos[i * 6 + 1] = d.y; rainPos[i * 6 + 2] = d.z;
-        rainPos[i * 6 + 3] = d.x - 0.35; rainPos[i * 6 + 4] = d.y - 1.1; rainPos[i * 6 + 5] = d.z;
-      }
-      rainGeo.attributes.position.needsUpdate = true;
-      // Lightning: brief flash every 6–11 s in live play only.
-      flashTimer -= dt;
-      if (flashTimer <= 0) { flashLeft = 0.14; flashTimer = 6 + rand() * 5; bolt.material.opacity = 0.9; }
-      if (flashLeft > 0) {
-        flashLeft -= dt;
-        dirLight.intensity = 2.2;
-        if (flashLeft <= 0) { bolt.material.opacity = 0; dirLight.intensity = STORM.sunI; }
-      }
-      // Lighthouse beam sweeps slowly.
-      beam.rotation.y = t * 0.25;
-    }
-  }
-
-  return {
-    colliders,
-    spots: { plaza: PLAZA_POS, garage: GARAGE_POS, lighthouse: LIGHTHOUSE_POS, marina: MARINA_POS, airfield: AIRFIELD_POS },
-    update,
-  };
+  return refs;
 }

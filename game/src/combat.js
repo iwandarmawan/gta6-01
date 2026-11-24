@@ -1,42 +1,37 @@
-// combat.js — on-foot shooting: hitscan tracer, cooldown, police response.
-import THREE from './three-shim.js';
+// Combat: a short tracer shot. Firing near police raises the wanted level;
+// a hit on a police car slows it. Kept deliberately simple and visible.
+import THREE from 'three';
 
-export function createCombat(scene) {
-  const tracerMat = new THREE.LineBasicMaterial({ color: 0xffe080, transparent: true, opacity: 0 });
-  const tracerGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 0, 1)]);
-  const tracer = new THREE.Line(tracerGeo, tracerMat);
-  tracer.frustumCulled = false;
-  scene.add(tracer);
-  let cooldown = 0;
-  let tracerLeft = 0;
-  return {
-    cooldownLeft() { return cooldown; },
-    shoot(from, heading, police, audio, onWanted) {
-      if (cooldown > 0) return false;
-      cooldown = 0.3;
-      tracerLeft = 0.08;
-      const fx = Math.sin(heading), fz = Math.cos(heading);
-      const pts = [new THREE.Vector3(from.x, 1.4, from.z), new THREE.Vector3(from.x + fx * 40, 1.4, from.z + fz * 40)];
-      tracerGeo.setFromPoints(pts);
-      tracerMat.opacity = 0.9;
-      audio.shot();
-      // Hit the nearest police car roughly ahead.
-      let best = null, bestD = 40;
-      for (const p of police.cars) {
-        const dx = p.v.group.position.x - from.x, dz = p.v.group.position.z - from.z;
-        const d = Math.hypot(dx, dz);
-        const dot = (dx * fx + dz * fz) / (d || 1);
-        if (d < bestD && dot > 0.85) { best = p; bestD = d; }
-      }
-      if (best) { best.v.health -= 1; onWanted(1); }
-      return true;
-    },
-    update(dt) {
-      cooldown = Math.max(0, cooldown - dt);
-      if (tracerLeft > 0) {
-        tracerLeft -= dt;
-        if (tracerLeft <= 0) tracerMat.opacity = 0;
-      }
-    },
-  };
+export function makeCombat(scene) {
+  const mat = new THREE.LineBasicMaterial({ color: 0xffe08a, transparent: true, opacity: 0 });
+  const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+  const line = new THREE.Line(geo, mat);
+  scene.add(line);
+  return { line, mat, ttl: 0 };
+}
+
+export function fireShot(combat, origin, heading, police) {
+  const dir = new THREE.Vector3(Math.sin(heading), 0, Math.cos(heading));
+  const end = origin.clone().add(dir.multiplyScalar(26));
+  end.y = 1.2;
+  const pts = [origin.clone().setY(1.2), end];
+  combat.line.geometry.setFromPoints(pts);
+  combat.mat.opacity = 1;
+  combat.ttl = 0.12;
+  // A hit on the nearest police car within the cone slows it and raises heat.
+  let hit = false;
+  for (const c of police.cars) {
+    const dx = c.x - origin.x, dz = c.z - origin.z;
+    const along = dx * Math.sin(heading) + dz * Math.cos(heading);
+    const side = Math.abs(dx * Math.cos(heading) - dz * Math.sin(heading));
+    if (along > 0 && along < 26 && side < 2.5) { c.speed *= 0.5; hit = true; }
+  }
+  return hit;
+}
+
+export function updateCombat(combat, dt) {
+  if (combat.ttl > 0) {
+    combat.ttl -= dt;
+    combat.mat.opacity = Math.max(0, combat.ttl / 0.12);
+  }
 }
