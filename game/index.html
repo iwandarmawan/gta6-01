@@ -2,63 +2,62 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<title>Solmar Bay — Storm Run</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Solmar Bay — Dawn Patrol</title>
 <style>
-  html, body { margin: 0; padding: 0; overflow: hidden; background: #1a1410; font-family: sans-serif; }
-  #app { position: fixed; inset: 0; }
-  #hud { position: fixed; inset: 0; pointer-events: none; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,0.8); }
-  #mode { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.45); padding: 4px 14px; border-radius: 4px; font-size: 15px; letter-spacing: 2px; }
-  #topright { position: absolute; top: 12px; right: 14px; text-align: right; }
-  #stars { color: #ff4040; font-size: 22px; letter-spacing: 2px; }
-  #cash { color: #7dff8a; font-size: 20px; font-weight: bold; }
-  #hpbar { width: 140px; height: 10px; background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.5); margin-top: 4px; }
-  #hp { height: 100%; width: 100%; background: #4ae08a; }
-  #minimap { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); width: 140px; height: 140px; border: 1px solid rgba(255,255,255,0.7); background: rgba(10,16,30,0.72); }
-  #objective { position: absolute; bottom: 64px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.55); padding: 6px 18px; border-radius: 4px; font-size: 17px; color: #ffe9a0; white-space: nowrap; }
-  #timer { position: absolute; bottom: 40px; left: 50%; transform: translateX(-50%); color: #ff8080; font-size: 16px; font-weight: bold; }
-  #speed { position: absolute; bottom: 14px; right: 16px; font-size: 24px; font-weight: bold; }
-  #toast { position: absolute; top: 64px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.6); padding: 5px 16px; border-radius: 4px; font-size: 15px; opacity: 0; transition: opacity 0.3s; }
-  #status { position: absolute; bottom: 4px; left: 6px; font-size: 10px; color: rgba(255,255,255,0.5); }
-  #menu { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; background: rgba(10,10,20,0.72); padding: 28px 44px; border-radius: 8px; }
-  #menu h1 { margin: 0 0 6px; font-size: 34px; color: #ffd9a8; letter-spacing: 3px; }
-  #menu p { margin: 4px 0; color: #ddd; font-size: 15px; }
-  #menu .keys { color: #9ad9ff; font-size: 13px; margin-top: 12px; }
+  html, body { margin: 0; padding: 0; overflow: hidden; background: #10141a; font-family: Arial, Helvetica, sans-serif; }
+  #game { position: fixed; inset: 0; }
+  #game canvas { display: block; }
+  #hud { position: fixed; inset: 0; pointer-events: none; color: #fff; text-shadow: 0 1px 3px #000; }
+  #topleft { position: absolute; top: 12px; right: 16px; text-align: right; font-size: 20px; }
+  #stars { color: #ffd24a; letter-spacing: 2px; font-size: 22px; }
+  #cash { color: #7dff8a; font-size: 22px; }
+  #healthbar { width: 140px; height: 10px; background: #222; border: 1px solid #555; margin-top: 4px; margin-left: auto; }
+  #health { height: 100%; width: 100%; background: #40d040; }
+  #mode { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.55); padding: 4px 14px; border-radius: 4px; font-size: 15px; letter-spacing: 2px; }
+  #minimap { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); border: 2px solid #8899aa; background: #10141a; }
+  #objective { position: absolute; bottom: 64px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.6); padding: 8px 18px; border-radius: 4px; font-size: 17px; white-space: nowrap; }
+  #timer { position: absolute; bottom: 100px; left: 50%; transform: translateX(-50%); color: #ff8080; font-size: 20px; }
+  #toast { position: absolute; bottom: 110px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.65); padding: 6px 14px; border-radius: 4px; font-size: 15px; opacity: 0; transition: opacity 0.3s; white-space: nowrap; }
+  #speed { position: absolute; bottom: 16px; right: 18px; font-size: 26px; font-weight: bold; }
+  #status { position: absolute; bottom: 6px; left: 8px; font-size: 11px; color: #8899aa; }
+  #menu { position: fixed; inset: 0; background: rgba(10, 16, 24, 0.82); color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; pointer-events: auto; cursor: pointer; z-index: 10; }
+  #menu h1 { font-size: 42px; margin: 0 0 8px; letter-spacing: 3px; }
+  #menu h2 { font-size: 18px; color: #9fd8ff; margin: 0 0 20px; font-weight: normal; }
+  #menu p { max-width: 560px; line-height: 1.6; font-size: 15px; color: #d8dee8; }
+  #menu .keys { font-size: 14px; color: #ffd24a; margin-top: 14px; line-height: 1.9; }
+  #menu .play { margin-top: 26px; font-size: 20px; border: 2px solid #fff; padding: 10px 28px; border-radius: 6px; }
 </style>
 </head>
 <body>
-<div id="app"></div>
+<div id="game"></div>
 <div id="hud">
-  <div id="mode">E · ON FOOT</div>
-  <div id="topright">
+  <div id="topleft">
     <div id="stars">☆☆☆☆☆</div>
     <div id="cash">$0</div>
-    <div id="hpbar"><div id="hp"></div></div>
+    <div id="healthbar"><div id="health"></div></div>
   </div>
-  <canvas id="minimap" width="140" height="140"></canvas>
-  <div id="objective">Steal a car (walk up and press E)</div>
+  <div id="mode">E · ON FOOT</div>
+  <canvas id="minimap" width="150" height="150"></canvas>
   <div id="timer"></div>
-  <div id="speed">0 km/h</div>
+  <div id="objective">Steal a car</div>
   <div id="toast"></div>
+  <div id="speed">0 km/h</div>
   <div id="status">loading</div>
 </div>
 <div id="menu">
-  <h1>SOLMAR BAY</h1>
-  <p>Dawn Patrol — Rico Marlowe wakes the city up.</p>
-  <p>Six missions. Steal cars, boats and a bike. Dodge the law.</p>
-  <p class="keys">WASD drive / walk &nbsp;·&nbsp; E enter, exit, interact &nbsp;·&nbsp; F shoot &nbsp;·&nbsp; Shift run</p>
-  <p class="keys">Click anywhere to start driving. The sun is coming up — make it count.</p>
+  <h1 id="menu-title">SOLMAR BAY — STORM RUN</h1>
+  <h2>A rainstorm open-world crime game — Rico Marlowe vs the storm</h2>
+  <p>Solmar Bay is drowning in a storm. Steal cars, outrun the police through the rain,
+  run six missions for Vera Costa, and build Rico's ride at the garage. The lighthouse
+  beam is your compass — the storm is your cover.</p>
+  <div class="keys">
+    W A S D — drive / walk &nbsp;·&nbsp; E — enter / exit car &nbsp;·&nbsp; F — shoot<br>
+    SPACE — brake &nbsp;·&nbsp; SHIFT — run &nbsp;·&nbsp; 1 / 2 / 3 at the garage — repair / engine / armor
+  </div>
+  <div class="play">CLICK TO PLAY</div>
 </div>
 <script src="./vendor/three.min.js"></script>
-<script type="importmap">
-{ "imports": { "three": "./src/three-shim.js" } }
-</script>
 <script type="module" src="./src/main.js"></script>
-<script>
-  document.addEventListener('click', () => {
-    const m = document.getElementById('menu');
-    if (m) m.style.display = 'none';
-  }, { once: true });
-</script>
 </body>
 </html>
