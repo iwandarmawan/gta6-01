@@ -1,87 +1,77 @@
-// police.js — police interceptors and the helicopter with its spotlight.
-import THREE from 'three';
-import { makeCar, placeCar } from './cars.js';
-import { mulberry32, range } from './rng.js';
+// police.js — interceptor patrol cars and the helicopter with its spotlight.
+// updateHeli / updatePolice are skipped entirely in frozen shot mode (round 13
+// lesson: the heli repositions absolutely every frame and would overwrite staging).
+import THREE from './three-shim.js';
+import { makeVehicle, placeCar } from './cars.js';
 
-export function spawnPolice(scene, count = 2) {
-  const rng = mulberry32(99);
+export function makePolice(scene) {
   const cars = [];
-  for (let i = 0; i < count; i++) {
-    const car = makeCar('police');
-    placeCar(car, range(rng, -40, 40), 100 + i * 18, Math.PI, 0);
-    scene.add(car);
-    cars.push(car);
+  for (let i = 0; i < 2; i++) {
+    const v = makeVehicle('interceptor');
+    scene.add(v.group);
+    placeCar(v, -40 - i * 12, 40 + i * 8, 0, 0);
+    cars.push({ v, state: 'patrol', target: null });
   }
-  return cars;
+  // Helicopter: dark body, rotor, translucent spotlight cone.
+  const heli = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.BoxGeometry(3.4, 1.4, 1.8),
+    new THREE.MeshStandardMaterial({ color: 0x22262e, roughness: 0.5, metalness: 0.4 }));
+  heli.add(body);
+  const tail = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.5, 0.5),
+    new THREE.MeshStandardMaterial({ color: 0x22262e, roughness: 0.5 }));
+  tail.position.set(-3, 0.2, 0); heli.add(tail);
+  const rotor = new THREE.Mesh(new THREE.BoxGeometry(8, 0.08, 0.5),
+    new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.4 }));
+  rotor.position.y = 0.9; heli.add(rotor);
+  const cone = new THREE.Mesh(new THREE.ConeGeometry(2.2, 16, 12, 1, true),
+    new THREE.MeshBasicMaterial({ color: 0xfff2b0, transparent: true, opacity: 0.10, side: THREE.DoubleSide, depthWrite: false }));
+  cone.position.y = -8.5; heli.add(cone);
+  heli.position.set(0, 18, 0);
+  scene.add(heli);
+  return { cars, heli, rotor, heliAngle: 0 };
 }
 
-export function makeHeli() {
-  const g = new THREE.Group();
-  const body = new THREE.Mesh(new THREE.BoxGeometry(2.2, 1.4, 4.6),
-    new THREE.MeshStandardMaterial({ color: 0x1a2028, roughness: 0.4, metalness: 0.4 }));
-  body.castShadow = true;
-  g.add(body);
-  const tail = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 4),
-    new THREE.MeshStandardMaterial({ color: 0x1a2028, roughness: 0.4 }));
-  tail.position.set(0, 0.3, -4); g.add(tail);
-  const rotor = new THREE.Mesh(new THREE.BoxGeometry(9, 0.08, 0.5),
-    new THREE.MeshStandardMaterial({ color: 0x333333, roughness: 0.5 }));
-  rotor.position.y = 1.0; g.add(rotor);
-  g.userData.rotor = rotor;
-  // Spotlight cone pointing down at the street.
-  const cone = new THREE.Mesh(
-    new THREE.ConeGeometry(4.5, 26, 16, 1, true),
-    new THREE.MeshBasicMaterial({ color: 0xfff2c0, transparent: true, opacity: 0.14, side: THREE.DoubleSide, depthWrite: false }));
-  cone.rotation.x = Math.PI; // apex up at the heli, opening down
-  cone.position.y = -13;
-  g.add(cone);
-  g.userData.cone = cone;
-  const spot = new THREE.PointLight(0xfff2c0, 60, 60, 1.6);
-  spot.position.y = -2;
-  g.add(spot);
-  return g;
-}
-
-export function updatePolice(cars, target, dt, wanted) {
-  for (const car of cars) {
-    if (wanted < 1 || !target) {
-      car.userData.speed = Math.max(0, car.userData.speed - 10 * dt);
+export function updatePolice(police, playerPos, wanted, dt, colliders, audio) {
+  if (dt <= 0) return;
+  for (const p of police.cars) {
+    const v = p.v;
+    const dx = playerPos.x - v.group.position.x;
+    const dz = playerPos.z - v.group.position.z;
+    const dist = Math.hypot(dx, dz);
+    if (wanted > 0 && dist < 120) {
+      const wantHeading = Math.atan2(dx, dz);
+      let dh = wantHeading - v.heading;
+      while (dh > Math.PI) dh -= Math.PI * 2;
+      while (dh < -Math.PI) dh += Math.PI * 2;
+      v.heading += Math.max(-2.2 * dt, Math.min(2.2 * dt, dh));
+      v.speed = Math.min(v.top, v.speed + 18 * dt);
+      if (dist < 4) { v.speed *= 0.5; }
     } else {
-      // Ram the target: steer toward it, faster than a sedan.
-      const dx = target.position.x - car.position.x;
-      const dz = target.position.z - car.position.z;
-      const want = Math.atan2(dx, dz);
-      let diff = want - car.userData.heading;
-      while (diff > Math.PI) diff -= Math.PI * 2;
-      while (diff < -Math.PI) diff += Math.PI * 2;
-      car.userData.heading += Math.max(-1.6 * dt, Math.min(1.6 * dt, diff));
-      car.userData.speed = Math.min(32, car.userData.speed + 18 * dt);
+      // Patrol: slow cruise along the coast road.
+      v.speed = Math.min(12, v.speed + 6 * dt);
+      const wantHeading = Math.PI / 2;
+      let dh = wantHeading - v.heading;
+      while (dh > Math.PI) dh -= Math.PI * 2;
+      while (dh < -Math.PI) dh += Math.PI * 2;
+      v.heading += Math.max(-1 * dt, Math.min(1 * dt, dh));
     }
-    car.position.x += Math.sin(car.userData.heading) * car.userData.speed * dt;
-    car.position.z += Math.cos(car.userData.heading) * car.userData.speed * dt;
-    car.rotation.y = car.userData.heading;
-    // Flash the light bar.
-    const bar = car.userData.lightBar;
-    if (bar) {
-      const phase = Math.floor(performance.now() / 180) % 2 === 0;
-      bar.red.material.emissiveIntensity = phase ? 2.2 : 0.2;
-      bar.blue.material.emissiveIntensity = phase ? 0.2 : 2.2;
-    }
+    v.group.position.x += Math.sin(v.heading) * v.speed * dt;
+    v.group.position.z += Math.cos(v.heading) * v.speed * dt;
+    v.group.position.x = Math.max(-150, Math.min(145, v.group.position.x));
+    v.group.position.z = Math.max(-150, Math.min(150, v.group.position.z));
+    v.group.rotation.y = v.heading;
   }
 }
 
-export function updateHeli(heli, target, dt, time, wanted) {
-  if (!heli) return;
-  heli.userData.rotor.rotation.y += dt * 22;
-  if (wanted >= 4 && target) {
-    // Orbit the target, spotlight cone sweeping the street.
-    const a = time * 0.35;
-    heli.position.set(
-      target.position.x + Math.cos(a) * 16,
-      26,
-      target.position.z + Math.sin(a) * 16);
-    heli.lookAt(target.position.x, 0, target.position.z);
-  } else {
-    heli.position.set(60 + Math.sin(time * 0.1) * 20, 30, 60);
-  }
+export function updateHeli(police, playerPos, dt, t) {
+  if (dt <= 0) return; // never overwrite a staged helicopter
+  police.heliAngle += dt * 0.35;
+  const r = 14;
+  police.heli.position.set(
+    playerPos.x + Math.cos(police.heliAngle) * r,
+    12 + Math.sin(t * 0.8) * 1.5,
+    playerPos.z + Math.sin(police.heliAngle) * r
+  );
+  police.heli.rotation.y = Math.atan2(playerPos.x - police.heli.position.x, playerPos.z - police.heli.position.z);
+  police.rotor.rotation.y = t * 30;
 }

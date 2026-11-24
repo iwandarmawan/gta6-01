@@ -1,17 +1,20 @@
-// save.js — localStorage save of cash, garage upgrades and mission progress.
-const KEY = 'solmar-bay-dawn-save-v1';
+// save.js — localStorage save/load, guarded (file:// and headless may refuse).
+const KEY = 'solmar-bay-storm-save-v1';
 export function loadSave() {
   try {
-    const raw = localStorage.getItem(KEY);
-    if (!raw) return { cash: 0, engine: false, armor: false, mission: 0, hp: 100 };
+    const raw = window.localStorage.getItem(KEY);
+    if (!raw) return null;
     const s = JSON.parse(raw);
-    return { cash: s.cash | 0, engine: !!s.engine, armor: !!s.armor, mission: s.mission | 0, hp: 100 };
-  } catch { return { cash: 0, engine: false, armor: false, mission: 0, hp: 100 }; }
+    if (typeof s !== 'object' || !s) return null;
+    return s;
+  } catch (e) { return null; }
 }
-export function storeSave(state) {
+export function saveGame(state) {
   try {
-    localStorage.setItem(KEY, JSON.stringify({
-      cash: state.cash, engine: state.engine, armor: state.armor, mission: state.mission,
+    window.localStorage.setItem(KEY, JSON.stringify({
+      cash: state.cash, missionIndex: state.missions.index,
+      engine: state.upgrades.engine, armor: state.upgrades.armor,
+      maxHealth: state.maxHealth, health: state.health,
     }));
-  } catch { /* storage is a bonus, never fatal */ }
+  } catch (e) { /* save is a bonus, never fatal */ }
 }

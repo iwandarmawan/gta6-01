@@ -1,47 +1,31 @@
-// config.js — Solmar Bay at dawn: layout, palette, missions, economy.
-// Sea is SOUTH (z > 150). Sun rises in the EAST (+x), low and warm.
+// config.js — world constants, storm palette, story, prices.
 export const WORLD = {
-  size: 420,
-  seaZ: 150,
-  plaza: { x: 0, z: 0 },
-  garage: { x: 25, z: -45 },
-  lighthouse: { x: 0, z: 185 },
-  marina: { x: -140, z: 165 },
-  airfield: { x: 150, z: -110 },
-  streetsX: [-120, -60, 0, 60, 120],
-  streetsZ: [-120, -60, 0, 60, 120],
-  coastZ: 140,
+  size: 480, half: 240,
+  seaX: 150,            // water east of x = 150
+  streetStep: 40, streetMin: -140, streetMax: 140, roadW: 10,
+  seed: 14,             // round-14 layout seed (new grid offset vs v9/v10/v12/v13)
 };
-
-export const DAWN = {
-  skyTop: 0x7fa8d8, skyHorizon: 0xffd9a8, sun: 0xffdf9a,
-  fog: 0xf2b27a, fogNear: 90, fogFar: 420,
-  ambient: 0xffe2c0, ambientIntensity: 1.15,
-  hemiSky: 0xffd9a0, hemiGround: 0x5a4a3a, hemiIntensity: 0.85,
-  sunLight: 0xffc98a, sunIntensity: 1.1,
-  moon: null, // dawn: no moon, the sun does the work
-  road: 0x33363e, roadLine: 0xd8c9a0,
-  ground: 0x7d6b4f, beach: 0xd9b98a, sea: 0x35597a,
-  windowLit: 0xffd27a, windowDark: 0x2a3242, windowEmissive: 0.25,
-  lampGlow: 0xffd9a0, lampPoolOpacity: 0.15,
+export const STORM = {
+  sky: 0x232e3d, fog: 0x27313f, fogNear: 60, fogFar: 420,
+  ambient: 0x4a5568, ambientI: 0.9,
+  hemiSky: 0x5a6a80, hemiGround: 0x2a2f28, hemiI: 0.7,
+  sun: 0x8a97a8, sunI: 0.55,                 // flat storm light
+  road: 0x1d2126, roadWet: 0x14181d, ground: 0x33382f,
+  building: [0x6b5a44, 0x5a5148, 0x4a5560, 0x71604a, 0x54423a],
+  sea: 0x0e2233, seaStorm: 0x12283a,
 };
-
-export const MISSIONS = [
-  { id: 'wheels', name: 'First Wheels', pay: 150, objective: 'Steal a car (walk up and press E)' },
-  { id: 'harbour', name: 'Harbour Escape', pay: 300, objective: 'Take the skiff to the lighthouse point' },
-  { id: 'taxi', name: 'City Taxi', pay: 250, time: 90, objective: 'Pick up the fare at Palm Plaza' },
-  { id: 'courier', name: 'Sunset Courier', pay: 400, time: 120, drops: 3, objective: 'Deliver 3 packages before sunrise ends' },
-  { id: 'rooftop', name: 'Rooftop Leap', pay: 350, objective: 'Reach the rooftop cache' },
-  { id: 'cache', name: 'Lighthouse Cache', pay: 500, packages: 5, objective: 'Collect 5 packages at the lighthouse' },
+export const MISSION_DEFS = [
+  { name: 'First Wheels', pay: 150, objective: 'Steal a car', target: 'car' },
+  { name: 'Harbour Escape', pay: 300, objective: 'Reach the marina', target: 'marina' },
+  { name: 'City Taxi', pay: 250, objective: 'Pick up the fare at Palm Plaza', target: 'plaza', timer: 90 },
+  { name: 'Sunset Courier', pay: 400, objective: 'Deliver 3 drops — 120s', target: 'drops', timer: 120 },
+  { name: 'Rooftop Leap', pay: 350, objective: 'Reach the airfield', target: 'airfield' },
+  { name: 'Lighthouse Cache', pay: 500, objective: 'Collect 5 packages at the lighthouse', target: 'lighthouse' },
 ];
-
-export const FARES = [120, 150, 140];
-export const GARAGE = { repair: 50, engine: 400, armor: 300, engineBoost: 1.25, armorHp: 50 };
-export const PLAYER = { hp: 100, walkSpeed: 6, runSpeed: 10 };
-export const VEHICLES = {
-  sedan: { top: 30, color: 0xc23a2e, name: 'Sedan' },
-  pickup: { top: 28, color: 0xd97a2b, name: 'Pickup' },
-  bike: { top: 34, color: 0x2a7ad9, name: 'Coast Runner' },
-  skiff: { top: 22, color: 0xe8e8e8, name: 'Skiff' },
-  police: { top: 36, color: 0xe8e8e8, name: 'Interceptor' },
-};
+export const FARES = [120, 150, 140]; // repeatable taxi fares after the story
+export const PRICES = { repair: 50, engine: 400, armor: 300 };
+export const GARAGE_POS = { x: 0, z: 120 };
+export const PLAZA_POS = { x: -20, z: 0 };
+export const LIGHTHOUSE_POS = { x: 178, z: 0 };
+export const MARINA_POS = { x: 120, z: -120 };
+export const AIRFIELD_POS = { x: -120, z: 120 };

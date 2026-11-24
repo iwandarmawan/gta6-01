@@ -1,110 +1,118 @@
-// cars.js — vehicles: build, place, drive.
-// placeCar(car, x, z, heading, speed): car FIRST — the v12 arity bug was here.
-import THREE from 'three';
-import { VEHICLES } from './config.js';
+// cars.js — vehicle factory, placement and arcade driving with AABB collision.
+// The collision penalty only applies when dt > 0 (frozen shot mode must never
+// decay a staged speed — round 12 lesson).
+import THREE from './three-shim.js';
+import { WORLD } from './config.js';
 
-function wheel() {
-  const w = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.42, 0.42, 0.32, 12),
-    new THREE.MeshStandardMaterial({ color: 0x141414, roughness: 0.9 }));
-  w.rotation.z = Math.PI / 2;
-  w.castShadow = true;
-  return w;
-}
+const KINDS = {
+  sedan: { color: 0xb02020, top: 34, accel: 22, w: 2, l: 4.4, h: 1.1 },
+  pickup: { color: 0xd07020, top: 32, accel: 20, w: 2.1, l: 4.8, h: 1.3 },
+  runner: { color: 0x20a0a0, top: 38, accel: 26, w: 0.9, l: 2.4, h: 1.0 },
+  skiff: { color: 0xd8d8d8, top: 26, accel: 16, w: 2.4, l: 6, h: 0.9 },
+  interceptor: { color: 0xe8e8e8, top: 36, accel: 26, w: 2, l: 4.6, h: 1.1 },
+};
 
-function headlight(color = 0xffe9b0) {
-  return new THREE.Mesh(
-    new THREE.BoxGeometry(0.34, 0.2, 0.1),
-    new THREE.MeshStandardMaterial({ color: 0x333333, emissive: color, emissiveIntensity: 1.2 }));
-}
-
-export function makeCar(kind) {
-  const spec = VEHICLES[kind] || VEHICLES.sedan;
+export function makeVehicle(kind) {
+  const k = KINDS[kind];
   const g = new THREE.Group();
-  g.userData.kind = kind;
-  g.userData.top = spec.top;
-  g.userData.speed = 0;
-  g.userData.heading = 0;
-  if (kind === 'bike') {
-    const body = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.7, 2.4),
-      new THREE.MeshStandardMaterial({ color: spec.color, roughness: 0.4, metalness: 0.3 }));
-    body.position.y = 0.7; body.castShadow = true;
-    g.add(body);
-    const w1 = wheel(); w1.position.set(0, 0.42, 0.9);
-    const w2 = wheel(); w2.position.set(0, 0.42, -0.9);
-    g.add(w1); g.add(w2);
-    const hl = headlight(); hl.position.set(0, 0.8, 1.25); g.add(hl);
-    return g;
-  }
+  const bodyMat = new THREE.MeshStandardMaterial({ color: k.color, roughness: 0.35, metalness: 0.4 });
   if (kind === 'skiff') {
-    const hull = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.9, 5.2),
-      new THREE.MeshStandardMaterial({ color: spec.color, roughness: 0.5 }));
-    hull.position.y = 0.5; hull.castShadow = true;
-    g.add(hull);
-    const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.8, 1.8),
-      new THREE.MeshStandardMaterial({ color: 0x2a4a6a, roughness: 0.4 }));
-    cabin.position.set(0, 1.2, -0.6); g.add(cabin);
-    const hl = headlight(0xfff2c0); hl.position.set(-0.6, 0.9, 2.6); g.add(hl);
-    const hl2 = headlight(0xfff2c0); hl2.position.set(0.6, 0.9, 2.6); g.add(hl2);
-    return g;
+    const hull = new THREE.Mesh(new THREE.BoxGeometry(k.w, k.h, k.l), bodyMat);
+    hull.position.y = 0.5; g.add(hull);
+    const seat = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.5, 1.6),
+      new THREE.MeshStandardMaterial({ color: 0x30343a, roughness: 0.8 }));
+    seat.position.set(0, 1.1, -0.5); g.add(seat);
+  } else if (kind === 'runner') {
+    const frame = new THREE.Mesh(new THREE.BoxGeometry(k.w, 0.5, k.l), bodyMat);
+    frame.position.y = 0.7; g.add(frame);
+    const seat = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.3, 1.1),
+      new THREE.MeshStandardMaterial({ color: 0x181818, roughness: 0.9 }));
+    seat.position.set(0, 1.0, -0.3); g.add(seat);
+  } else {
+    const body = new THREE.Mesh(new THREE.BoxGeometry(k.w, k.h, k.l), bodyMat);
+    body.position.y = 0.75; g.add(body);
+    const cabin = new THREE.Mesh(new THREE.BoxGeometry(k.w - 0.3, 0.8, k.l * 0.5),
+      new THREE.MeshStandardMaterial({ color: 0x18222e, roughness: 0.15, metalness: 0.5 }));
+    cabin.position.set(0, 1.6, -0.3); g.add(cabin);
   }
-  const body = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.75, 4.4),
-    new THREE.MeshStandardMaterial({ color: spec.color, roughness: 0.35, metalness: 0.35 }));
-  body.position.y = 0.65; body.castShadow = true;
-  g.add(body);
-  const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.65, 2.2),
-    new THREE.MeshStandardMaterial({ color: 0x1a2028, roughness: 0.2, metalness: 0.5 }));
-  cabin.position.set(0, 1.3, -0.2); cabin.castShadow = true;
-  g.add(cabin);
-  const spots = [[-0.75, 1.45], [0.75, 1.45], [-0.75, -1.45], [0.75, -1.45]];
-  for (const [x, z] of spots) {
-    const w = wheel(); w.position.set(x, 0.42, z); g.add(w);
+  // Wheels.
+  const wheelMat = new THREE.MeshStandardMaterial({ color: 0x0c0c0c, roughness: 0.95 });
+  const wheelGeo = new THREE.CylinderGeometry(0.42, 0.42, 0.35, 10);
+  wheelGeo.rotateZ(Math.PI / 2);
+  const nWheels = kind === 'runner' ? 2 : (kind === 'skiff' ? 0 : 4);
+  const wz = kind === 'runner' ? [0.9, -0.9] : [1.45, -1.45];
+  for (const z of wz) {
+    for (const x of (kind === 'runner' ? [0] : [-k.w / 2, k.w / 2])) {
+      const w = new THREE.Mesh(wheelGeo, wheelMat);
+      w.position.set(x, 0.42, z); g.add(w);
+    }
   }
-  const h1 = headlight(); h1.position.set(-0.6, 0.7, 2.22); g.add(h1);
-  const h2 = headlight(); h2.position.set(0.6, 0.7, 2.22); g.add(h2);
-  const tlMat = new THREE.MeshStandardMaterial({ color: 0x330000, emissive: 0xff2a2a, emissiveIntensity: 1.0 });
-  for (const x of [-0.6, 0.6]) {
-    const tl = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.18, 0.1), tlMat);
-    tl.position.set(x, 0.7, -2.22); g.add(tl);
+  // Headlights (emissive + translucent cones) and taillights.
+  const headMat = new THREE.MeshBasicMaterial({ color: 0xfff2b0 });
+  const coneMat = new THREE.MeshBasicMaterial({ color: 0xfff2b0, transparent: true, opacity: 0.13, side: THREE.DoubleSide, depthWrite: false });
+  for (const x of [-k.w / 2 + 0.35, k.w / 2 - 0.35]) {
+    const h = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.18, 0.1), headMat);
+    h.position.set(x, 0.8, k.l / 2 + 0.02); g.add(h);
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(1.1, 7, 10, 1, true), coneMat);
+    cone.rotation.x = Math.PI / 2 + 0.25; cone.position.set(x, 0.7, k.l / 2 + 3.5); g.add(cone);
+    const t = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.18, 0.1),
+      new THREE.MeshBasicMaterial({ color: 0xff2020 }));
+    t.position.set(x, 0.8, -k.l / 2 - 0.02); g.add(t);
   }
-  if (kind === 'police') {
-    const bar = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.22, 0.5),
-      new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.4 }));
-    bar.position.set(0, 1.72, -0.2); g.add(bar);
-    const red = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.16, 0.4),
-      new THREE.MeshStandardMaterial({ color: 0x220000, emissive: 0xff2020, emissiveIntensity: 1.6 }));
-    red.position.set(-0.32, 1.86, -0.2); g.add(red);
-    const blue = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.16, 0.4),
-      new THREE.MeshStandardMaterial({ color: 0x000022, emissive: 0x2040ff, emissiveIntensity: 1.6 }));
-    blue.position.set(0.32, 1.86, -0.2); g.add(blue);
-    g.userData.lightBar = { red, blue };
+  // Police light bar.
+  if (kind === 'interceptor') {
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.18, 0.4),
+      new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.5 }));
+    bar.position.set(0, 2.15, -0.3); g.add(bar);
+    const red = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.2, 0.42), new THREE.MeshBasicMaterial({ color: 0xff2020 }));
+    red.position.set(-0.3, 2.15, -0.3); g.add(red);
+    const blue = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.2, 0.42), new THREE.MeshBasicMaterial({ color: 0x2040ff }));
+    blue.position.set(0.3, 2.15, -0.3); g.add(blue);
   }
-  return g;
+  const v = { group: g, kind, speed: 0, heading: 0, top: k.top, accel: k.accel, w: k.w, l: k.l, health: 3 };
+  g.userData.vehicle = v;
+  return v;
 }
 
-export function placeCar(car, x, z, heading, speed) {
-  car.position.set(x, 0, z);
-  car.rotation.y = heading;
-  car.userData.heading = heading;
-  car.userData.speed = speed;
+export function placeCar(v, x, z, heading, speed) {
+  v.heading = heading;
+  v.speed = speed || 0;
+  v.group.position.set(x, 0, z);
+  v.group.rotation.y = heading;
 }
 
-export function driveCar(car, dt, input, opts = {}) {
-  const u = car.userData;
-  const top = (opts.top || u.top || 30) * (opts.boost || 1);
-  const accel = 22, brake = 34, drag = 6;
-  if (input.up) u.speed += accel * dt;
-  if (input.down) u.speed -= brake * dt;
-  if (!input.up && !input.down) u.speed -= Math.sign(u.speed) * drag * dt;
-  if (Math.abs(u.speed) < 0.2 && !input.up && !input.down) u.speed = 0;
-  u.speed = Math.max(-10, Math.min(top, u.speed));
-  const steer = (input.left ? 1 : 0) - (input.right ? 1 : 0);
-  if (Math.abs(u.speed) > 0.5) u.heading += steer * 1.9 * dt * Math.sign(u.speed);
-  // Collision penalty only when time actually advances (dt > 0).
-  // In frozen shot mode dt is 0 and the staged speed must survive.
-  if (dt > 0 && opts.colliding) u.speed *= 0.4;
-  car.position.x += Math.sin(u.heading) * u.speed * dt;
-  car.position.z += Math.cos(u.heading) * u.speed * dt;
-  car.rotation.y = u.heading;
-  return u.speed;
+export function driveCar(v, input, dt, colliders, opts) {
+  if (dt <= 0) return; // frozen shot mode: never decay a staged speed
+  const o = opts || {};
+  const top = v.top * (o.engine ? 1.25 : 1);
+  if (input.f > 0) v.speed += v.accel * dt;
+  else if (input.f < 0) v.speed -= v.accel * 0.7 * dt;
+  else v.speed -= Math.sign(v.speed) * 8 * dt;
+  if (input.brake) v.speed -= Math.sign(v.speed) * 30 * dt;
+  if (Math.abs(v.speed) < 0.1 && input.f === 0) v.speed = 0;
+  v.speed = Math.max(-10, Math.min(top, v.speed));
+  v.heading -= input.s * dt * 1.9 * Math.sign(v.speed || 1) * Math.min(1, Math.abs(v.speed) / 8);
+  const fx = Math.sin(v.heading), fz = Math.cos(v.heading);
+  let nx = v.group.position.x + fx * v.speed * dt * 3.6 / 3.6;
+  let nz = v.group.position.z + fz * v.speed * dt;
+  // Keep land vehicles out of the sea; keep the skiff in the water.
+  if (v.kind === 'skiff') {
+    if (nx < WORLD.seaX + 1) { nx = WORLD.seaX + 1; v.speed *= 0.5; }
+  } else if (nx > WORLD.seaX - 2) { nx = WORLD.seaX - 2; v.speed *= 0.4; }
+  nx = Math.max(-230, Math.min(230, nx));
+  nz = Math.max(-230, Math.min(230, nz));
+  // AABB collision with buildings: push out on the smallest axis, bleed speed.
+  for (const c of colliders) {
+    const hw = c.hw + v.w / 2, hd = c.hd + v.l / 2;
+    const dx = nx - c.x, dz = nz - c.z;
+    if (Math.abs(dx) < hw && Math.abs(dz) < hd) {
+      const px = hw - Math.abs(dx), pz = hd - Math.abs(dz);
+      if (px < pz) nx = c.x + Math.sign(dx || 1) * hw;
+      else nz = c.z + Math.sign(dz || 1) * hd;
+      v.speed *= 0.4;
+    }
+  }
+  v.group.position.x = nx;
+  v.group.position.z = nz;
+  v.group.rotation.y = v.heading;
 }

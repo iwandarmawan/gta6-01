@@ -1,87 +1,107 @@
-// shots.js — scripted dawn screenshots, seed=3.
-// Every shot stages the game through its own code (real positions, real HUD),
-// then the main loop freezes time (dt = 0) so the staged state survives.
-import { placeCar } from './cars.js';
-import { placeBeacon } from './missions.js';
+// shots.js — scripted screenshot staging for seed=4. The game renders these
+// states through its own code; nothing is faked. Rules learned from rounds
+// 12–13: in shot mode dt is frozen at 0, the menu is hidden, missions are set
+// to phase 'done' so updateMissions never overwrites the staged objective,
+// and the chase camera / heli updates are skipped so staged positions survive.
+import THREE from './three-shim.js';
 
-function setCam(state, x, y, z, lookX, lookY, lookZ) {
-  state.camera.position.set(x, y, z);
-  state.camera.lookAt(lookX, lookY, lookZ);
+export function shotName() {
+  try { return new URLSearchParams(location.search).get('shot'); }
+  catch (e) { return null; }
 }
 
-export function stageShot(state, name) {
-  const { player, sedan, pickup, skiff, police, heli, traffic } = state;
-  state.shotMode = true;
-  state.missions.phase = 'done'; // missions never overwrite the staged objective
-  // Park the ambient traffic/peds out of the frame unless a shot needs them.
-  for (const c of traffic) { c.position.set(500, 0, 500); }
-  heli.position.set(500, 60, 500);
+function setCam(G, px, py, pz, lx, ly, lz) {
+  G.shotCamera = { pos: new THREE.Vector3(px, py, pz), look: new THREE.Vector3(lx, ly, lz) };
+  G.camera.position.copy(G.shotCamera.pos);
+  G.camera.lookAt(G.shotCamera.look);
+}
+
+export function stageShot(G, name) {
+  G.shotMode = true;
+  G.missions.phase = 'done'; // freeze the mission system on the staged text
+  document.getElementById('menu').style.display = 'none';
+  const spots = G.spots;
 
   if (name === 'chase') {
-    // COVER: dawn chase on the coast road, lighthouse ahead, heli spotlight on.
-    // Sedan and police head SOUTH (heading 0) toward the lighthouse point.
-    state.vehicle = sedan;
-    placeCar(sedan, 0, 60, 0, 77 / 3.6);
-    placeCar(police[0], -4, 84, 0, 30);
-    placeCar(police[1], 4, 92, 0, 30);
-    // Heli low and close so the spotlight cone reads in the cover frame.
-    heli.position.set(12, 12, 70);
-    heli.lookAt(sedan.position.x, 0, sedan.position.z);
-    state.wanted = 4;
-    state.missions.objective = 'Reach the lighthouse point';
-    state.missions.timer = 0;
-    placeBeacon(state.beacon, 0, 175);
-    state.beaconPos = { x: 0, z: 175 };
-    // One traffic car ahead with headlights on, one ped on the sidewalk.
-    placeCar(traffic[0], 2, 108, 0, 14);
-    state.peds[0].position.set(-8, 0, 72);
-    setCam(state, 5, 7, 46, sedan.position.x, 2, sedan.position.z + 14);
+    // Storm chase on the coast road, lighthouse ahead, heli spotlight in rain.
+    G.mode = 'drive';
+    G.vehicle = G.vehicles.sedan;
+    G.player.group.visible = false;
+    const sedan = G.vehicles.sedan;
+    sedan.group.visible = true;
+    sedan.group.position.set(140, 0, -60);
+    sedan.heading = 0.56; sedan.speed = 21.4; // 77 km/h
+    sedan.group.rotation.y = sedan.heading;
+    const p1 = G.police.cars[0].v, p2 = G.police.cars[1].v;
+    p1.group.visible = true; p2.group.visible = true;
+    p1.group.position.set(148, 0, -18); p1.heading = 0.5; p1.group.rotation.y = 0.5;
+    p2.group.position.set(146, 0, 4); p2.heading = 0.6; p2.group.rotation.y = 0.6;
+    G.police.heli.position.set(152, 16, -48);
+    G.police.heli.rotation.y = 0.9;
+    G.wanted = 4;
+    G.missions.objective = 'Reach the lighthouse point';
+    G.hud.setObjective('Reach the lighthouse point');
+    G.beacon.position.set(spots.lighthouse.x, 0, spots.lighthouse.z);
+    G.beacon.visible = true;
+    G.playerPos = { x: 140, z: -60 };
+    setCam(G, 148, 12, -85, 150, 2, -40);
   } else if (name === 'play') {
-    // On foot at Palm Plaza: Rico walks to the red sedan under the beacon.
-    // Camera raised and shifted so no plaza palm trunk blocks the frame.
-    state.vehicle = null;
-    player.position.set(-2, 0, 16);
-    player.rotation.y = Math.PI * 0.85;
-    placeCar(sedan, 8, 6, Math.PI * 0.75, 0);
-    state.wanted = 0;
-    state.missions.objective = 'Steal a car (walk up and press E)';
-    state.missions.timer = 0;
-    placeBeacon(state.beacon, 8, 6);
-    state.beaconPos = { x: 8, z: 6 };
-    state.peds[0].position.set(-14, 0, -6);
-    state.peds[1].position.set(16, 0, 18);
-    // Low, close camera: Rico centre-left, sedan + beacon centre-right.
-    setCam(state, -10, 6, 28, 3, 1.5, 8);
+    // On foot at Palm Plaza in the rain, red sedan under the beacon.
+    G.mode = 'foot';
+    G.vehicle = null;
+    G.player.group.visible = true;
+    G.player.group.position.set(-24, 0, 10);
+    G.player.heading = 0.9;
+    G.player.group.rotation.y = 0.9;
+    const sedan = G.vehicles.sedan;
+    sedan.group.visible = true;
+    sedan.group.position.set(-12, 0, 2);
+    sedan.heading = 2.2; sedan.group.rotation.y = 2.2;
+    G.wanted = 0;
+    G.missions.objective = 'Steal a car (walk up and press E)';
+    G.hud.setObjective('Steal a car (walk up and press E)');
+    G.beacon.position.set(-12, 0, 2);
+    G.beacon.visible = true;
+    G.playerPos = { x: -24, z: 10 };
+    setCam(G, -34, 8, 26, -12, 1.5, 0);
   } else if (name === 'drive') {
-    // Driving the orange pickup up the coast road at dawn, fare timer running.
-    // Pickup heads NORTH (heading PI) toward Palm Plaza; camera behind it.
-    state.vehicle = pickup;
-    placeCar(pickup, 0, 100, Math.PI, 70 / 3.6);
-    state.wanted = 0;
-    state.missions.objective = 'Pick up the fare at Palm Plaza — 90s';
-    state.missions.timer = 90;
-    placeBeacon(state.beacon, 0, 0);
-    state.beaconPos = { x: 0, z: 0 };
-    placeCar(traffic[0], 1, 80, Math.PI, 13);
-    state.peds[0].position.set(-7, 0, 88);
-    setCam(state, 0, 8, 118, 0, 1.5, 90);
-  } else if (name === 'mission') {
-    // Mission: the skiff in open water (clear of the dock colliders) heading
-    // for the lighthouse, beam sweeping the dawn sea.
-    state.vehicle = skiff;
-    placeCar(skiff, 40, 190, Math.atan2(0 - 40, 178 - 190), 38 / 3.6);
-    state.wanted = 2;
-    state.missions.objective = 'Reach the lighthouse point';
-    state.missions.timer = 0;
-    placeBeacon(state.beacon, 0, 178);
-    state.beaconPos = { x: 0, z: 178 };
-    // Side-on camera: the skiff shows its full length, lighthouse behind it.
-    setCam(state, 68, 6, 182, 32, 2, 190);
+    // Orange pickup up the rain-slicked coast road, traffic ahead, taxi timer.
+    G.mode = 'drive';
+    G.vehicle = G.vehicles.pickup;
+    G.player.group.visible = false;
+    const pk = G.vehicles.pickup;
+    pk.group.visible = true;
+    pk.group.position.set(140, 0, 62);
+    pk.heading = Math.PI; pk.speed = 19.4; // 70 km/h
+    pk.group.rotation.y = Math.PI;
+    const t0 = G.traffic.cars[0].v;
+    t0.group.position.set(140, 0, 18); t0.heading = Math.PI; t0.group.rotation.y = Math.PI;
+    G.wanted = 0;
+    G.missions.objective = 'Pick up the fare at Palm Plaza';
+    G.missions.timer = 90;
+    G.hud.setObjective('Pick up the fare at Palm Plaza');
+    G.beacon.position.set(spots.plaza.x, 0, spots.plaza.z);
+    G.beacon.visible = true;
+    G.playerPos = { x: 140, z: 62 };
+    setCam(G, 147, 7, 86, 140, 2, 20);
   } else {
-    // Unknown shot: fall back to the plaza.
-    state.vehicle = null;
-    player.position.set(0, 0, 10);
-    setCam(state, -12, 9, 28, 0, 2, 0);
+    // Mission: skiff in open storm water heading for the lighthouse.
+    G.mode = 'drive';
+    G.vehicle = G.vehicles.skiff;
+    G.player.group.visible = false;
+    const sk = G.vehicles.skiff;
+    sk.group.visible = true;
+    sk.group.position.set(166, 0.1, 62);
+    sk.heading = 2.93; sk.speed = 10.5; // 38 km/h
+    sk.group.rotation.y = 2.93;
+    G.wanted = 2;
+    G.missions.objective = 'Reach the lighthouse point';
+    G.hud.setObjective('Reach the lighthouse point');
+    G.beacon.position.set(spots.lighthouse.x, 0, spots.lighthouse.z);
+    G.beacon.visible = true;
+    G.playerPos = { x: 166, z: 62 };
+    setCam(G, 178, 5, 84, 168, 1, 45);
   }
-  state.toast = '';
+  G.hud.update(G, 0);
+  document.getElementById('status').textContent = 'ready';
 }

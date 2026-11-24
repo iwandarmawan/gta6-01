@@ -1,54 +1,42 @@
-// peds.js — pedestrians strolling the plaza and sidewalks.
-import THREE from 'three';
-import { mulberry32, pick, range } from './rng.js';
+// peds.js — 18 pedestrians strolling the sidewalks in the rain.
+import THREE from './three-shim.js';
 
-const SHIRTS = [0xc23a2e, 0x2a7ad9, 0x3a9a4a, 0xe8a02a, 0x8a4ad9, 0xd9d9d9];
+const SHIRTS = [0xc04040, 0x4060c0, 0xc0a040, 0x40a060, 0x8040a0, 0xc06080];
 
-export function makePed(rng) {
-  const g = new THREE.Group();
-  const shirt = new THREE.MeshStandardMaterial({ color: pick(rng, SHIRTS), roughness: 0.8 });
-  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.34, 0.9, 8), shirt);
-  body.position.y = 0.95; body.castShadow = true;
-  g.add(body);
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.26, 10, 8),
-    new THREE.MeshStandardMaterial({ color: 0xd9a986, roughness: 0.7 }));
-  head.position.y = 1.65; g.add(head);
-  const legs = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.6, 0.24),
-    new THREE.MeshStandardMaterial({ color: 0x2a2a34, roughness: 0.9 }));
-  legs.position.y = 0.3; g.add(legs);
-  g.userData.heading = range(rng, 0, Math.PI * 2);
-  g.userData.speed = range(rng, 0.8, 1.6);
-  g.userData.turnAt = 0;
-  return g;
-}
-
-export function spawnPeds(scene, count = 18) {
-  const rng = mulberry32(4242);
+export function makePeds(scene, rand) {
   const peds = [];
-  for (let i = 0; i < count; i++) {
-    const p = makePed(rng);
-    const nearPlaza = i < 8;
-    const x = nearPlaza ? range(rng, -24, 24) : range(rng, -140, 140);
-    const z = nearPlaza ? range(rng, -24, 24) : pick(rng, [-120, -60, 0, 60, 120]) + range(rng, -4, 4);
-    p.position.set(x, 0, z);
-    scene.add(p);
-    peds.push(p);
+  for (let i = 0; i < 18; i++) {
+    const g = new THREE.Group();
+    const shirt = SHIRTS[i % SHIRTS.length];
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.45, 1.1, 8),
+      new THREE.MeshStandardMaterial({ color: shirt, roughness: 0.9 }));
+    body.position.y = 0.85; g.add(body);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.28, 10, 8),
+      new THREE.MeshStandardMaterial({ color: 0xd8b08a, roughness: 0.8 }));
+    head.position.y = 1.6; g.add(head);
+    const legs = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.3),
+      new THREE.MeshStandardMaterial({ color: 0x222226, roughness: 0.9 }));
+    legs.position.y = 0.25; g.add(legs);
+    const x = (rand() - 0.5) * 260, z = (rand() - 0.5) * 260;
+    g.position.set(x, 0, z);
+    scene.add(g);
+    peds.push({ g, dir: rand() * Math.PI * 2, speed: 1 + rand() * 1.2, bob: rand() * 6 });
   }
-  return peds;
-}
-
-export function updatePeds(peds, dt, time) {
-  for (const p of peds) {
-    if (time > p.userData.turnAt) {
-      p.userData.heading += (Math.random() - 0.5) * 0.9;
-      p.userData.turnAt = time + 2 + Math.random() * 3;
-    }
-    p.position.x += Math.sin(p.userData.heading) * p.userData.speed * dt;
-    p.position.z += Math.cos(p.userData.heading) * p.userData.speed * dt;
-    if (Math.abs(p.position.x) > 165) p.userData.heading += Math.PI;
-    if (p.position.z > 145 || p.position.z < -165) p.userData.heading += Math.PI;
-    p.rotation.y = p.userData.heading;
-    // Gentle walk bob.
-    p.position.y = Math.abs(Math.sin(time * 6 + p.position.x)) * 0.05;
-  }
+  return {
+    peds,
+    update(dt, t) {
+      if (dt <= 0) return;
+      for (const p of peds) {
+        p.g.position.x += Math.sin(p.dir) * p.speed * dt;
+        p.g.position.z += Math.cos(p.dir) * p.speed * dt;
+        p.g.rotation.y = p.dir;
+        p.g.position.y = Math.abs(Math.sin(t * 4 + p.bob)) * 0.06;
+        if (Math.abs(p.g.position.x) > 145 || Math.abs(p.g.position.z) > 145 || p.g.position.x > 145) {
+          p.dir = Math.random() * Math.PI * 2;
+          p.g.position.x = Math.max(-140, Math.min(140, p.g.position.x));
+          p.g.position.z = Math.max(-140, Math.min(140, p.g.position.z));
+        }
+      }
+    },
+  };
 }
