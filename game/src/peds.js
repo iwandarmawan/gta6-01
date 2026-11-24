@@ -1,138 +1,72 @@
-// Pedestrians: people strolling the sidewalks who hurry away
-// when a fast car comes at them — and who go down (then get back
-// up) when the player picks a fight.
-
-import { TUNING, ROADS } from './config.js';
-import { makeRng } from './rng.js';
+// Pedestrians for Solmar Bay: people walking the sidewalks between random
+// points, who scatter when a gun goes off or a car bears down on them.
 
 const THREE = window.THREE;
+import { makeRng, pick, range } from './rng.js';
+import { randomSidewalkPoint, resolveCollision } from './city.js';
 
-const SHIRTS = [0xe86a6a, 0x6aa8e8, 0x6ae88a, 0xe8d06a, 0xb06ae8, 0xe8e8e8, 0x6ad8e8];
-const SKINS = [0xf0c8a0, 0xc89878, 0x8a5a3a, 0xf0d0b0];
+const SHIRTS = [0xd43a2a, 0x2a6ad4, 0x2e8f5a, 0xe8b48c, 0x9a6ad4, 0xf2e3c6, 0x3a3a40];
 
-function makePedMesh(rng) {
-  const group = new THREE.Group();
-  const body = new THREE.Mesh(
-    new THREE.BoxGeometry(0.7, 1.05, 0.42),
-    new THREE.MeshLambertMaterial({ color: rng.pick(SHIRTS) }),
-  );
-  body.position.y = 1.05;
-  body.castShadow = true;
-  group.add(body);
-  const head = new THREE.Mesh(
-    new THREE.SphereGeometry(0.28, 10, 8),
-    new THREE.MeshLambertMaterial({ color: rng.pick(SKINS) }),
-  );
-  head.position.y = 1.8;
-  head.castShadow = true;
-  group.add(head);
-  const legMat = new THREE.MeshLambertMaterial({ color: 0x2a2f38 });
-  for (const lx of [-0.16, 0.16]) {
-    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.55, 0.28), legMat);
-    leg.position.set(lx, 0.28, 0);
-    group.add(leg);
-  }
-  return group;
-}
-
-function randomSidewalkPoint(rng) {
-  const road = rng.pick(ROADS);
-  const t = rng.next();
-  const x = road.x1 + (road.x2 - road.x1) * t;
-  const z = road.z1 + (road.z2 - road.z1) * t;
-  const alongX = road.z1 === road.z2;
-  return {
-    x: x + (alongX ? 0 : rng.pick([-7, 7])),
-    z: z + (alongX ? rng.pick([-7, 7]) : 0),
-  };
-}
-
-export function createPedestrians(scene, city, seed) {
-  const rng = makeRng(seed + 77);
-  const peds = [];
-  for (let i = 0; i < TUNING.pedCount; i++) {
-    const p = randomSidewalkPoint(rng);
-    const group = makePedMesh(rng);
+export function spawnPeds(G) {
+  const rng = makeRng(987);
+  G.peds = [];
+  for (let i = 0; i < 24; i++) {
+    const p = randomSidewalkPoint(G, rng);
+    const group = new THREE.Group();
+    const shirt = new THREE.MeshLambertMaterial({ color: pick(rng, SHIRTS) });
+    const skin = new THREE.MeshLambertMaterial({ color: pick(rng, [0xe8b48c, 0xc98a5a, 0x8a5a3a, 0xf2d0b0]) });
+    const legs = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.8, 0.35), new THREE.MeshLambertMaterial({ color: 0x2a3542 }));
+    legs.position.y = 0.4;
+    group.add(legs);
+    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.65, 0.8, 0.4), shirt);
+    torso.position.y = 1.2;
+    group.add(torso);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.28, 10, 8), skin);
+    head.position.y = 1.85;
+    group.add(head);
     group.position.set(p.x, 0, p.z);
-    scene.add(group);
-    peds.push({
-      group,
+    G.scene.add(group);
+    const dest = randomSidewalkPoint(G, rng);
+    G.peds.push({
+      mesh: group,
       pos: group.position,
-      heading: rng.range(0, Math.PI * 2),
-      speed: rng.range(1.2, 2.2),
-      target: randomSidewalkPoint(rng),
-      state: 'walk',
-      downTimer: 0,
-      bobT: rng.range(0, 6),
+      dest,
+      speed: range(rng, 1.2, 2.2),
+      scared: 0,
+      angle: rng() * Math.PI * 2,
     });
   }
+}
 
-  // Knock a pedestrian down (player punch). Returns the ped or null.
-  function knockDown(x, z, range) {
-    let best = null;
-    let bestD = range;
-    for (const p of peds) {
-      if (p.state === 'down') continue;
-      const d = Math.hypot(p.pos.x - x, p.pos.z - z);
-      if (d < bestD) { best = p; bestD = d; }
-    }
-    if (!best) return null;
-    best.state = 'down';
-    best.downTimer = 3;
-    best.group.rotation.x = -Math.PI / 2;
-    best.group.position.y = 0.4;
-    return best;
-  }
-
-  function update(dt, playerPos, playerSpeed) {
-    for (const p of peds) {
-      if (p.state === 'down') {
-        p.downTimer -= dt;
-        if (p.downTimer <= 0) {
-          p.state = 'flee';
-          p.group.rotation.x = 0;
-          p.group.position.y = 0;
-          const dx = p.pos.x - playerPos.x;
-          const dz = p.pos.z - playerPos.z;
-          const d = Math.hypot(dx, dz) || 1;
-          p.target = { x: p.pos.x + (dx / d) * 40, z: p.pos.z + (dz / d) * 40 };
-        }
-        continue;
-      }
-      const dxP = p.pos.x - playerPos.x;
-      const dzP = p.pos.z - playerPos.z;
-      const dP = Math.hypot(dxP, dzP);
-      if (playerSpeed > 6 && dP < 9) {
-        p.state = 'flee';
-        p.target = { x: p.pos.x + (dxP / (dP || 1)) * 30, z: p.pos.z + (dzP / (dP || 1)) * 30 };
-      } else if (p.state === 'flee' && dP > 25) {
-        p.state = 'walk';
-        p.target = randomSidewalkPoint(rng);
-      }
-      const dx = p.target.x - p.pos.x;
-      const dz = p.target.z - p.pos.z;
-      const dist = Math.hypot(dx, dz);
-      if (dist < 2) {
-        if (p.state === 'flee') p.state = 'walk';
-        p.target = randomSidewalkPoint(rng);
-        continue;
-      }
-      const speed = p.state === 'flee' ? 5.5 : p.speed;
-      const wantHeading = Math.atan2(dx, dz);
-      let diff = wantHeading - p.heading;
-      while (diff > Math.PI) diff -= Math.PI * 2;
-      while (diff < -Math.PI) diff += Math.PI * 2;
-      p.heading += Math.max(-3 * dt, Math.min(3 * dt, diff));
-      const prev = { x: p.pos.x, z: p.pos.z };
-      p.pos.x += Math.sin(p.heading) * speed * dt;
-      p.pos.z += Math.cos(p.heading) * speed * dt;
-      // Slide around buildings instead of walking through them.
-      if (city) city.resolveCircle(p.pos, 0.5, prev);
-      p.bobT += dt * speed * 2;
-      p.group.position.y = Math.abs(Math.sin(p.bobT)) * 0.08;
-      p.group.rotation.y = p.heading;
+export function scarePeds(G, x, z, radius) {
+  for (const ped of G.peds) {
+    const dx = ped.pos.x - x;
+    const dz = ped.pos.z - z;
+    const d = Math.sqrt(dx * dx + dz * dz);
+    if (d < radius) {
+      ped.scared = 3;
+      ped.dest = { x: ped.pos.x + (dx / (d || 1)) * 20, z: ped.pos.z + (dz / (d || 1)) * 20 };
     }
   }
+}
 
-  return { peds, update, knockDown };
+export function updatePeds(G, dt) {
+  const rng = G.rng;
+  for (const ped of G.peds) {
+    const dx = ped.dest.x - ped.pos.x;
+    const dz = ped.dest.z - ped.pos.z;
+    const d = Math.sqrt(dx * dx + dz * dz);
+    if (d < 1.5) {
+      ped.dest = randomSidewalkPoint(G, rng);
+      continue;
+    }
+    const speed = ped.scared > 0 ? ped.speed * 2.4 : ped.speed;
+    ped.scared = Math.max(0, ped.scared - dt);
+    ped.pos.x += (dx / d) * speed * dt;
+    ped.pos.z += (dz / d) * speed * dt;
+    ped.angle = Math.atan2(-dx, -dz);
+    ped.mesh.rotation.y = ped.angle;
+    ped.mesh.position.y = Math.abs(Math.sin(G.elapsed * 6 + ped.pos.x)) * 0.08;
+    resolveCollision(G, ped.pos, 0.6);
+  }
 }

@@ -1,8 +1,7 @@
-// Seeded random numbers (mulberry32) so the city layout is stable
-// for a given seed, and screenshot runs can reproduce the same world.
+// Seeded random numbers for Solmar Bay: one small deterministic generator
+// (mulberry32) plus helpers, so a staged scene plays the same way every run.
 
-// Make a new generator from an integer seed.
-export function mulberry32(seed) {
+export function makeRng(seed) {
   let a = seed >>> 0;
   return function next() {
     a |= 0;
@@ -13,22 +12,18 @@ export function mulberry32(seed) {
   };
 }
 
-// Convenience wrapper with the helpers the world builders use.
-export function makeRng(seed) {
-  const next = mulberry32(seed);
-  return {
-    next,
-    range(min, max) {
-      return min + (max - min) * next();
-    },
-    int(min, max) {
-      return Math.floor(min + (max - min + 1) * next());
-    },
-    pick(list) {
-      return list[Math.floor(next() * list.length)];
-    },
-    chance(p) {
-      return next() < p;
-    },
-  };
+export function pick(rng, list) {
+  return list[Math.floor(rng() * list.length)];
+}
+
+export function range(rng, min, max) {
+  return min + rng() * (max - min);
+}
+
+export function rangeInt(rng, min, max) {
+  return min + Math.floor(rng() * (max - min + 1));
+}
+
+export function chance(rng, p) {
+  return rng() < p;
 }

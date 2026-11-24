@@ -1,507 +1,361 @@
-// Solmar Bay — bootstrap and game loop. Builds the world, wires
-// every system together, runs the state machine (menu / playing /
-// paused / over) and drives the player on foot, by car and by boat.
-
-import { WORLD, PLACES, KEYS, TUNING } from './config.js';
-import { makeRng } from './rng.js';
-import { createInput } from './input.js';
-import { loadSave, storeSave } from './save.js';
-import { createAudio } from './audio.js';
-import { buildCity } from './city.js';
-import { createRenderer, updateDayNight, createCameraRig } from './render.js';
-import { makeCar, driveCar, makeBoat, driveBoat } from './cars.js';
-import { createTraffic } from './traffic.js';
-import { createPedestrians } from './peds.js';
-import { createPolice } from './police.js';
-import { createCombat } from './combat.js';
-import { createMissions } from './missions.js';
-import { createHud } from './hud.js';
-import { applyShot } from './shots.js';
+// Solmar Bay: the entry point. Builds the world, runs the loop, and wires
+// every system together — the player on foot, vehicles, police, missions,
+// the HUD and the menus. Shot mode (?shot=) skips the menu and stages a
+// scripted scene for the screenshots.
 
 const THREE = window.THREE;
+import { START, GARAGE } from './config.js';
+import { makeRng } from './rng.js';
+import { loadSave, writeSave } from './save.js';
+import { createInput, keyHeld, keyPressed, clearPressed, moveAxes } from './input.js';
+import { createAudio, ensureAudio, updateEngineSound } from './audio.js';
+import { buildCity, updateDayNight, isWater, groundHeight, resolveCollision } from './city.js';
+import { spawnParkedVehicles, nearestVehicle, enterVehicle, exitVehicle, updateVehicle } from './cars.js';
+import { spawnTraffic, updateTraffic } from './traffic.js';
+import { spawnPeds, updatePeds } from './peds.js';
+import { updateWanted, updatePolice, addWanted } from './police.js';
+import { createCombat, shoot, updateCombat } from './combat.js';
+import { startMission, updateMission, showMessage } from './missions.js';
+import { buildHud, showScreen, updateHud } from './hud.js';
+import { createRenderer, updateCamera } from './render.js';
+import { parseShot, applyShot } from './shots.js';
 
-window.addEventListener('error', (e) => {
-  window.__gameError = (window.__gameError || '') + (e.message || e.error) + '\n';
-  const d = document.getElementById('err');
-  if (d) d.textContent = window.__gameError;
-});
-window.addEventListener('unhandledrejection', (e) => {
-  window.__gameError = (window.__gameError || '') + 'rejection: ' + e.reason + '\n';
-  const d = document.getElementById('err');
-  if (d) d.textContent = window.__gameError;
-});
-
-const container = document.getElementById('game');
-const save = loadSave();
-const input = createInput(window);
-const audio = createAudio();
-audio.setMuted(save.muted);
-const env = createRenderer(container);
-const rig = createCameraRig(env.camera);
-const city = buildCity(env.scene, WORLD.seed);
-const traffic = createTraffic(env.scene, city, makeRng(WORLD.seed + 5));
-const peds = createPedestrians(env.scene, city, WORLD.seed);
-const police = createPolice(env.scene, city, makeRng(WORLD.seed + 9));
-
-// The player on foot: blue jacket, red cap, visible from behind.
-function makePlayerMesh() {
+function buildPlayerMesh(G) {
   const group = new THREE.Group();
-  const legMat = new THREE.MeshLambertMaterial({ color: 0x2a2f38 });
-  for (const lx of [-0.16, 0.16]) {
-    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.55, 0.28), legMat);
-    leg.position.set(lx, 0.28, 0);
-    leg.castShadow = true;
-    group.add(leg);
-  }
-  const body = new THREE.Mesh(
-    new THREE.BoxGeometry(0.75, 1.0, 0.45),
-    new THREE.MeshLambertMaterial({ color: 0x2e5fa8 }),
-  );
-  body.position.y = 1.1;
-  body.castShadow = true;
-  group.add(body);
-  const head = new THREE.Mesh(
-    new THREE.SphereGeometry(0.28, 12, 10),
-    new THREE.MeshLambertMaterial({ color: 0xf0c8a0 }),
-  );
-  head.position.y = 1.85;
-  head.castShadow = true;
+  const legs = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.85, 0.4), new THREE.MeshLambertMaterial({ color: 0x2a3542 }));
+  legs.position.y = 0.42;
+  group.add(legs);
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.85, 0.42), new THREE.MeshLambertMaterial({ color: 0xc23a2e }));
+  torso.position.y = 1.28;
+  group.add(torso);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.3, 10, 8), new THREE.MeshLambertMaterial({ color: 0xe8b48c }));
+  head.position.y = 1.95;
   group.add(head);
-  const cap = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.3, 0.3, 0.12, 10),
-    new THREE.MeshLambertMaterial({ color: 0xc23b2e }),
-  );
-  cap.position.y = 2.06;
+  const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 0.12, 10), new THREE.MeshLambertMaterial({ color: 0x1a2a4a }));
+  cap.position.y = 2.18;
   group.add(cap);
-  const brim = new THREE.Mesh(
-    new THREE.BoxGeometry(0.5, 0.05, 0.3),
-    new THREE.MeshLambertMaterial({ color: 0xc23b2e }),
-  );
-  brim.position.set(0, 2.0, 0.32);
-  group.add(brim);
+  G.scene.add(group);
   return group;
 }
 
-const playerGroup = makePlayerMesh();
-playerGroup.position.set(PLACES.playerStart.x, 0, PLACES.playerStart.z);
-playerGroup.rotation.y = PLACES.playerStart.heading;
-env.scene.add(playerGroup);
-
-const player = {
-  group: playerGroup,
-  pos: playerGroup.position,
-  heading: PLACES.playerStart.heading,
-  speed: 0,
-  vehicle: 'foot',
-  car: null,
-  boat: null,
-};
-
-// Parked cars the player can steal, plus the player's own red car.
-const parkedCars = [];
-function parkCar(x, z, heading, color) {
-  const car = makeCar(env.scene, x, z, heading, color, false);
-  parkedCars.push(car);
-  return car;
-}
-const playerCar = parkCar(-20, -40, 0, 0xc23b2e);
-parkCar(-140, 36, Math.PI / 2, 0xe8c832);
-parkCar(40, -84, 0, 0xeeeeee);
-parkCar(170, -84, Math.PI / 2, 0x3aa655);
-
-const boat = makeBoat(env.scene, 244, 72);
-
-const hud = createHud();
-
-const game = {
-  mode: 'menu',
-  time: 0,
-  timeOfDay: 0.42,
-  timeFrozen: false,
-  cash: save.cash,
-  save,
-  env, rig, city, input, audio, hud, police, peds, traffic,
-  player, playerCar, boat,
-  snapCamera: false,
-  parkCars: parkedCars,
-};
-
-game.saveGame = function saveGame() {
-  save.cash = game.cash;
-  storeSave(save);
-};
-
-const combat = createCombat(game);
-const missions = createMissions(env.scene, game);
-game.combat = combat;
-game.missions = missions;
-
-game.onWasted = function onWasted() {
-  if (game.mode !== 'playing') return;
-  game.mode = 'over';
-  audio.engine(false, 0);
-  audio.siren(false, 0);
-  hud.showGameOver('wasted', retryRun, quitToMenu);
-};
-
-game.onBusted = function onBusted() {
-  if (game.mode !== 'playing') return;
-  game.mode = 'over';
-  audio.engine(false, 0);
-  audio.siren(false, 0);
-  hud.showGameOver('busted', retryRun, quitToMenu);
-};
-
-game.hideStartScreen = function hideStartScreen() {
-  hud.hideStart();
-  document.getElementById('hud').style.display = 'block';
-};
-
-function startGame() {
-  audio.ensure();
-  game.hideStartScreen();
-  game.mode = 'playing';
-  hud.toast('Welcome to Solmar Bay. Visit Rico\'s Garage ($) to take a job.', 5);
+function createGame() {
+  const G = {
+    THREE,
+    elapsed: 0,
+    dayT: 0.42,
+    mode: 'menu',
+    rng: makeRng(20261124),
+    player: {
+      pos: new THREE.Vector3(START.pos.x, 0, START.pos.z),
+      angle: START.angle,
+      onFoot: true,
+      health: 100,
+      maxHealth: 100,
+      cash: 0,
+      vehicle: null,
+      vy: 0,
+      grounded: true,
+    },
+    vehicles: [],
+    traffic: [],
+    peds: [],
+    police: [],
+    heli: null,
+    wanted: 0,
+    wantedTimer: 0,
+    mission: null,
+    completed: [],
+    upgrades: { engine: false, armor: false },
+    stats: { crimes: 0, fares: 0 },
+    messages: [],
+    cameraYaw: START.angle,
+    orbitX: 0,
+    orbitY: 0.25,
+    cameraOverride: null,
+    shotAutoDrive: false,
+    faresUnlocked: false,
+    fare: null,
+    fareCooldown: 0,
+    nearVehicle: null,
+    nearGarage: false,
+    bustedFine: 0,
+    isNight: false,
+    frames: 0,
+  };
+  G.audio = createAudio();
+  G.input = createInput();
+  G.combat = createCombat(G);
+  createRenderer(G);
+  G.scene = new THREE.Scene();
+  buildCity(G);
+  spawnParkedVehicles(G);
+  spawnTraffic(G);
+  spawnPeds(G);
+  G.playerMesh = buildPlayerMesh(G);
+  buildHud(G);
+  return G;
 }
 
-function retryRun() {
-  document.querySelectorAll('.overlay').forEach((o) => o.remove());
-  document.getElementById('hud').style.display = 'block';
-  if (missions.active) missions.fail('Run restarted');
-  police.reset();
-  combat.reset();
-  player.vehicle = 'foot';
-  player.car = null;
-  player.boat = null;
-  player.pos.set(PLACES.playerStart.x, 0, PLACES.playerStart.z);
-  player.heading = PLACES.playerStart.heading;
-  player.group.visible = true;
-  player.group.position.copy(player.pos);
-  player.group.rotation.y = player.heading;
-  playerCar.health = playerCar.maxHealth;
-  playerCar.pos.set(-20, 0, -40);
-  playerCar.heading = 0;
-  playerCar.speed = 0;
-  boat.health = boat.maxHealth;
-  boat.pos.set(244, 0, 72);
-  boat.heading = Math.PI / 2;
-  boat.speed = 0;
-  game.mode = 'playing';
-  game.snapCamera = true;
-  hud.toast('Back on your feet. The city is still yours to take.', 3);
-}
-
-function quitToMenu() {
-  document.querySelectorAll('.overlay').forEach((o) => o.remove());
-  if (missions.active) missions.fail('Quit to menu');
-  police.reset();
-  game.mode = 'menu';
-  document.getElementById('hud').style.display = 'none';
-  hud.showStart(save, startGame);
-}
-
-game.enterCar = function enterCar(car) {
-  const pi = parkedCars.indexOf(car);
-  if (pi >= 0) parkedCars.splice(pi, 1);
-  const ti = traffic.cars.findIndex((t) => t.car === car);
-  if (ti >= 0) traffic.cars.splice(ti, 1);
-  player.vehicle = 'car';
-  player.car = car;
-  player.group.visible = false;
-  rig.yaw = car.heading;
-  game.snapCamera = true;
-  audio.beep(660, 0.1);
-};
-
-function exitCar() {
-  const car = player.car;
-  if (!car) return;
-  player.vehicle = 'foot';
-  player.car = null;
-  player.pos.set(car.pos.x - Math.cos(car.heading) * 2.4, 0, car.pos.z + Math.sin(car.heading) * 2.4);
-  player.heading = car.heading;
-  player.group.visible = true;
-  player.group.position.copy(player.pos);
-  player.group.rotation.y = player.heading;
-  if (!parkedCars.includes(car)) parkedCars.push(car);
-  game.snapCamera = true;
-}
-
-function boardBoat() {
-  player.vehicle = 'boat';
-  player.boat = boat;
-  player.group.visible = false;
-  rig.yaw = boat.heading;
-  game.snapCamera = true;
-  hud.toast('At the helm. Sail to the buoy.', 3);
-  audio.beep(760, 0.15);
-}
-
-function exitBoat() {
-  player.vehicle = 'foot';
-  player.boat = null;
-  player.pos.set(PLACES.dock.x, 0, PLACES.dock.z);
-  player.heading = Math.PI;
-  player.group.visible = true;
-  player.group.position.copy(player.pos);
-  player.group.rotation.y = player.heading;
-  game.snapCamera = true;
-}
-
-function nearestCar(maxDist) {
-  let best = null;
-  let bestD = maxDist;
-  const all = [...parkedCars, ...traffic.cars.map((t) => t.car)];
-  for (const car of all) {
-    const d = Math.hypot(car.pos.x - player.pos.x, car.pos.z - player.pos.z);
-    if (d < bestD) { best = car; bestD = d; }
-  }
-  return best;
-}
-
-// ---- Per-frame updates ----
-let pendingAction = null;
-
-function updateOnFoot(dt) {
-  const yaw = rig.yaw;
-  const fwd = { x: Math.sin(yaw), z: Math.cos(yaw) };
-  const right = { x: -Math.cos(yaw), z: Math.sin(yaw) };
-  let mx = 0;
-  let mz = 0;
-  if (input.isDown(KEYS.up)) { mx += fwd.x; mz += fwd.z; }
-  if (input.isDown(KEYS.down)) { mx -= fwd.x; mz -= fwd.z; }
-  if (input.isDown(KEYS.right)) { mx += right.x; mz += right.z; }
-  if (input.isDown(KEYS.left)) { mx -= right.x; mz -= right.z; }
-  const len = Math.hypot(mx, mz);
-  const running = input.isDown(KEYS.run);
-  const speed = running ? TUNING.runSpeed : TUNING.walkSpeed;
-  const prev = { x: player.pos.x, z: player.pos.z };
-  if (len > 0) {
+function updatePlayerOnFoot(G, dt) {
+  const input = G.input;
+  const axes = moveAxes(input);
+  const speed = keyHeld(input, 'ShiftLeft') || keyHeld(input, 'ShiftRight') ? 10 : 6;
+  // Movement is relative to the camera, so W always walks away from it.
+  const cy = G.cameraYaw;
+  const fx = -Math.sin(cy);
+  const fz = -Math.cos(cy);
+  const rx = Math.cos(cy);
+  const rz = -Math.sin(cy);
+  let mx = fx * -axes.z + rx * axes.x;
+  let mz = fz * -axes.z + rz * axes.x;
+  const len = Math.sqrt(mx * mx + mz * mz);
+  if (len > 0.01) {
     mx /= len;
     mz /= len;
-    player.heading = Math.atan2(mx, mz);
-    player.pos.x += mx * speed * dt;
-    player.pos.z += mz * speed * dt;
-    player.speed = speed;
-    player.group.position.y = Math.abs(Math.sin(game.time * 11)) * 0.07;
-  } else {
-    player.speed = 0;
-    player.group.position.y = 0;
+    const nx = G.player.pos.x + mx * speed * dt;
+    const nz = G.player.pos.z + mz * speed * dt;
+    if (!isWater(nx, nz)) {
+      G.player.pos.x = nx;
+      G.player.pos.z = nz;
+    }
+    G.player.angle = Math.atan2(-mx, -mz);
+    G.playerMesh.position.y = Math.abs(Math.sin(G.elapsed * 10)) * 0.06;
   }
-  city.resolveCircle(player.pos, TUNING.playerRadius, prev);
-  player.group.position.x = player.pos.x;
-  player.group.position.z = player.pos.z;
-  player.group.rotation.y = player.heading;
-
-  if (input.wasPressed(KEYS.punch)) combat.tryPunch();
-
-  // Interaction prompt and the E key.
-  pendingAction = null;
-  const boatD = Math.hypot(boat.pos.x - player.pos.x, boat.pos.z - player.pos.z);
-  const car = nearestCar(4.5);
-  const garageD = Math.hypot(PLACES.garage.x - player.pos.x, PLACES.garage.z - player.pos.z);
-  if (boatD < 5.5) {
-    hud.setPrompt('Press E to board the boat');
-    pendingAction = 'boat';
-  } else if (car) {
-    hud.setPrompt('Press E to enter the car');
-    pendingAction = { type: 'car', car };
-  } else if (garageD < 14 && missions.index < 3 && !missions.active) {
-    hud.setPrompt('Press E to start mission: ' + MISSIONS[missions.index].name);
-    pendingAction = 'mission';
-  } else {
-    hud.setPrompt('');
+  // Jump.
+  if (keyPressed(input, 'Space') && G.player.grounded) {
+    G.player.vy = 7;
+    G.player.grounded = false;
   }
-  if (input.wasPressed(KEYS.enter) && pendingAction) {
-    if (pendingAction === 'boat') boardBoat();
-    else if (pendingAction === 'mission') missions.startNext();
-    else if (pendingAction.type === 'car') game.enterCar(pendingAction.car);
-  }
-}
-
-function updateDriving(dt) {
-  const car = player.car;
-  if (!car) {
-    player.vehicle = 'foot';
-    return;
-  }
-  // The camera and the HUD follow the player position, so keep it
-  // glued to the car while driving.
-  player.pos.copy(car.pos);
-  player.heading = car.heading;
-  const throttle = (input.isDown(KEYS.up) ? 1 : 0) + (input.isDown(KEYS.down) ? -1 : 0)
-    + (game.shotDrive ? 0.7 : 0);
-  const steer = (input.isDown(KEYS.left) ? 1 : 0) + (input.isDown(KEYS.right) ? -1 : 0);
-  const handbrake = input.isDown(KEYS.brake);
-  if (car.health <= 0) {
-    car.speed *= Math.max(0, 1 - 2 * dt);
-    hud.setPrompt('Your car is wrecked — press E to get out and find another ride');
-    if (input.wasPressed(KEYS.enter)) exitCar();
-    player.speed = car.speed;
-    return;
-  }
-  const res = driveCar(car, dt, throttle, steer, handbrake, city);
-  player.speed = car.speed;
-  if (res.hit && res.impact > 9) {
-    combat.damagePlayer((res.impact - 9) * 1.1);
-    game.audio.crash(0.7);
-  }
-  const garageD = Math.hypot(PLACES.garage.x - car.pos.x, PLACES.garage.z - car.pos.z);
-  if (garageD < 16 && car.health < car.maxHealth && game.cash >= TUNING.repairCost) {
-    hud.setPrompt('Press R to repair the car ($' + TUNING.repairCost + ')');
-    if (input.wasPressed(KEYS.retry)) {
-      game.cash -= TUNING.repairCost;
-      car.health = car.maxHealth;
-      game.saveGame();
-      hud.toast('Car repaired. -$' + TUNING.repairCost, 2.5);
-      audio.beep(880, 0.15);
+  if (!G.player.grounded) {
+    G.player.vy -= 22 * dt;
+    G.player.pos.y += G.player.vy * dt;
+    const ground = groundHeight(G.player.pos.x, G.player.pos.z);
+    if (G.player.pos.y <= ground) {
+      G.player.pos.y = ground;
+      G.player.vy = 0;
+      G.player.grounded = true;
     }
   } else {
-    hud.setPrompt(Math.abs(car.speed) < 1 ? 'Press E to step out' : '');
+    G.player.pos.y = groundHeight(G.player.pos.x, G.player.pos.z);
   }
-  if (input.wasPressed(KEYS.enter) && Math.abs(car.speed) < 1) exitCar();
+  resolveCollision(G, G.player.pos, 0.7);
+  G.playerMesh.position.set(G.player.pos.x, G.player.pos.y, G.player.pos.z);
+  G.playerMesh.rotation.y = G.player.angle;
 }
 
-function updateBoating(dt) {
-  const throttle = (input.isDown(KEYS.up) ? 1 : 0) + (input.isDown(KEYS.down) ? -1 : 0);
-  const steer = (input.isDown(KEYS.left) ? 1 : 0) + (input.isDown(KEYS.right) ? -1 : 0);
-  driveBoat(boat, dt, throttle, steer, city);
-  player.speed = boat.speed;
-  player.pos.copy(boat.pos);
-  player.heading = boat.heading;
-  if (boat.health <= 0) {
-    boat.health = boat.maxHealth;
-    boat.pos.set(244, 0, 72);
-    boat.heading = Math.PI / 2;
-    boat.speed = 0;
-    if (missions.active) missions.fail('The boat was wrecked');
-    exitBoat();
-    hud.toast('The boat went down. She is back at the dock.', 3);
+function updatePlayerVehicle(G, dt) {
+  const input = G.input;
+  const v = G.player.vehicle;
+  const axes = moveAxes(input);
+  let throttle = 0;
+  let brake = false;
+  if (G.shotAutoDrive) {
+    throttle = 1;
+  } else {
+    if (axes.z < 0) throttle = 1;
+    if (axes.z > 0) brake = true;
+    if (keyHeld(input, 'Space')) brake = true;
+  }
+  const steer = G.shotAutoDrive ? 0 : -axes.x;
+  updateVehicle(G, v, dt, throttle, steer, brake);
+  G.player.pos.copy(v.pos);
+  G.player.angle = v.angle;
+  updateEngineSound(G.audio, Math.abs(v.speed), v.spec.topSpeed, true);
+}
+
+function handleInteract(G) {
+  const input = G.input;
+  if (!keyPressed(input, 'KeyE')) return;
+  if (G.player.vehicle) {
+    if (G.nearGarage) {
+      G.mode = 'garage';
+      showScreen(G, 'garage');
+      return;
+    }
+    exitVehicle(G);
+    updateEngineSound(G.audio, 0, 1, false);
     return;
   }
-  const dockD = Math.hypot(PLACES.dock.x - boat.pos.x, PLACES.dock.z - boat.pos.z);
-  if (dockD < 12 && Math.abs(boat.speed) < 1) {
-    hud.setPrompt('Press E to step ashore');
-    if (input.wasPressed(KEYS.enter)) exitBoat();
-  } else {
-    hud.setPrompt('');
+  if (G.nearVehicle) {
+    const v = G.nearVehicle;
+    enterVehicle(G, v);
+    if (v.kind !== 'boat') {
+      addWanted(G, 1);
+      G.stats.crimes += 1;
+      showMessage(G, `You stole the ${v.spec.name}. The PD noticed.`, 3);
+    }
+    return;
+  }
+  if (G.nearGarage) {
+    showMessage(G, 'The garage works on cars — bring one in.', 3);
   }
 }
 
-function hudState() {
-  const step = missions.active ? missions.active.def.steps[missions.active.stepIndex] : null;
-  return {
-    cash: game.cash,
-    health: combat.health,
-    maxHealth: combat.maxHealth,
-    stars: police.stars,
-    speedKmh: Math.abs(player.speed) * 3.6,
-    vehicle: player.vehicle,
-    missionName: missions.active ? missions.active.def.name : null,
-    objective: step ? step.label : '',
-    timeLeft: missions.active ? missions.active.timeLeft : 0,
-    targetDist: missions.active ? missions.targetDistance() : 0,
-    timeOfDay: game.timeOfDay,
-    time: game.time,
-    yaw: rig.yaw,
-    player,
-    target: missions.currentTarget(),
-    policeCars: police.cars,
-    trafficCars: traffic.cars,
-    boat,
+function buyFromGarage(G, what) {
+  const v = G.player.vehicle;
+  if (what === 'repair') {
+    if (!v || v.damage <= 0) return;
+    if (G.player.cash < GARAGE.repairCost) {
+      showMessage(G, 'Not enough cash for repairs.', 3);
+      return;
+    }
+    G.player.cash -= GARAGE.repairCost;
+    v.damage = 0;
+    if (v.smoke) {
+      v.mesh.remove(v.smoke);
+      v.smoke = null;
+    }
+    showMessage(G, 'Repaired — good as new.', 3);
+  } else if (what === 'engine') {
+    if (G.upgrades.engine || G.player.cash < GARAGE.engineCost) {
+      showMessage(G, G.upgrades.engine ? 'Engine upgrade already owned.' : 'Not enough cash for the engine upgrade.', 3);
+      return;
+    }
+    G.player.cash -= GARAGE.engineCost;
+    G.upgrades.engine = true;
+    showMessage(G, 'Engine upgrade fitted — +25% top speed.', 4);
+  } else if (what === 'armor') {
+    if (G.upgrades.armor || G.player.cash < GARAGE.armorCost) {
+      showMessage(G, G.upgrades.armor ? 'Armor already owned.' : 'Not enough cash for armor.', 3);
+      return;
+    }
+    G.player.cash -= GARAGE.armorCost;
+    G.upgrades.armor = true;
+    G.player.maxHealth += GARAGE.armorBonus;
+    G.player.health = Math.min(G.player.maxHealth, G.player.health + GARAGE.armorBonus);
+    showMessage(G, 'Armor fitted — +50 max health.', 4);
+  }
+  writeSave(G);
+  showScreen(G, 'garage');
+}
+
+function startGame(G, useSave) {
+  ensureAudio(G.audio);
+  if (useSave) {
+    const save = loadSave();
+    if (save) {
+      G.player.cash = save.cash;
+      G.completed = save.completed;
+      G.upgrades = save.upgrades;
+      G.stats.fares = save.fares;
+      if (save.upgrades.armor) {
+        G.player.maxHealth = 100 + GARAGE.armorBonus;
+        G.player.health = G.player.maxHealth;
+      }
+    }
+  }
+  G.mode = 'play';
+  showScreen(G, null);
+  const next = G.completed.length;
+  startMission(G, next);
+  document.getElementById('status').textContent = 'ready';
+}
+
+function main() {
+  const G = createGame();
+  const shot = parseShot();
+  const statusEl = document.getElementById('status');
+  const save = loadSave();
+  const continueBtn = document.getElementById('continue-btn');
+  if (continueBtn) continueBtn.style.display = save ? 'inline-block' : 'none';
+
+  G.ui.onStart = (useSave) => startGame(G, useSave);
+  G.ui.onResume = () => {
+    G.mode = 'play';
+    showScreen(G, null);
   };
-}
+  G.ui.onRespawn = () => {
+    G.mode = 'play';
+    showScreen(G, null);
+    showMessage(G, 'Back on the streets. Lay low for a while.', 4);
+  };
+  G.ui.onGarageClose = () => {
+    G.mode = 'play';
+    showScreen(G, null);
+  };
+  G.ui.onGarageBuy = (what) => buyFromGarage(G, what);
 
-// ---- Main loop ----
-let last = performance.now();
-let frames = 0;
-const statusEl = document.getElementById('status');
-
-function frame(now) {
-  requestAnimationFrame(frame);
-  const dt = Math.min(0.05, (now - last) / 1000 || 0.016);
-  last = now;
-  game.time += dt;
-  if (!game.timeFrozen) game.timeOfDay = (game.timeOfDay + dt / TUNING.dayLength) % 1;
-
-  const night = updateDayNight(env, game.timeOfDay);
-  city.setNight(night);
-  city.update(dt);
-
-  if (input.anyKey) audio.ensure();
-
-  if (game.mode === 'menu') {
-    rig.orbit({ x: 10, z: 0 }, 130, game.time * 0.045, 58);
-    traffic.update(dt, null);
-    peds.update(dt, player.pos, 0);
-  } else if (game.mode === 'playing') {
-    if (input.wasPressed(KEYS.pause)) {
-      game.mode = 'paused';
-      audio.engine(false, 0);
-      audio.siren(false, 0);
-      hud.showPause({
-        onResume: () => { game.mode = 'playing'; },
-        onRestart: retryRun,
-        onMute: () => {
-          save.muted = !save.muted;
-          audio.setMuted(save.muted);
-          storeSave(save);
-        },
-        muted: save.muted,
-      });
+  window.addEventListener('mousedown', (event) => {
+    if (event.button === 0 && G.mode === 'play' && G.player.onFoot) {
+      ensureAudio(G.audio);
+      shoot(G);
     }
-    if (input.wasPressed(KEYS.mute)) {
-      save.muted = !save.muted;
-      audio.setMuted(save.muted);
-      storeSave(save);
-      hud.toast(save.muted ? 'Sound muted' : 'Sound on', 1.5);
-    }
+  });
 
-    if (player.vehicle === 'foot') updateOnFoot(dt);
-    else if (player.vehicle === 'car') updateDriving(dt);
-    else updateBoating(dt);
-
-    missions.update(dt);
-    police.update(dt, player, game);
-    traffic.update(dt, player.car);
-    peds.update(dt, player.pos, Math.abs(player.speed));
-    combat.update(dt);
-
-    if (police.stars > save.bestWanted) {
-      save.bestWanted = police.stars;
-      storeSave(save);
-    }
-
-    const driving = player.vehicle !== 'foot';
-    audio.engine(driving, driving ? Math.abs(player.speed) / TUNING.carMaxSpeed : 0);
-    audio.siren(police.stars > 0, dt);
-
-    rig.update(player.pos, player.heading, dt, input, game.snapCamera);
-    game.snapCamera = false;
-    hud.update(hudState(), dt);
-  } else if (game.mode === 'paused') {
-    if (input.wasPressed(KEYS.pause)) {
-      document.querySelectorAll('.overlay').forEach((o) => o.remove());
-      game.mode = 'playing';
-    }
-  } else if (game.mode === 'over') {
-    if (input.wasPressed(KEYS.retry)) retryRun();
-    rig.update(player.pos, player.heading, dt, null, false);
+  if (shot.shot) {
+    // Screenshot staging: straight into the game, no menu.
+    G.mode = 'play';
+    showScreen(G, null);
+    applyShot(G, shot.shot);
+    G.playerMesh.visible = !G.player.vehicle;
   }
 
-  env.renderer.render(env.scene, env.camera);
-  frames += 1;
-  if (frames === 1 && statusEl) statusEl.textContent = 'ready';
-  input.endFrame();
+  const clock = new THREE.Clock();
+  let firstFrame = true;
+
+  function frame() {
+    requestAnimationFrame(frame);
+    const dt = Math.min(0.05, clock.getDelta());
+    G.elapsed += dt;
+    G.frames += 1;
+
+    if (G.mode === 'menu') {
+      // Slow orbit over the plaza behind the start screen.
+      G.camera.position.set(Math.cos(G.elapsed * 0.05) * 90, 42, Math.sin(G.elapsed * 0.05) * 90);
+      G.camera.lookAt(0, 2, 0);
+      updateTraffic(G, dt);
+      updatePeds(G, dt);
+      updateDayNight(G, dt);
+    } else if (G.mode === 'play') {
+      const input = G.input;
+      // Pause.
+      if (keyPressed(input, 'KeyP') || keyPressed(input, 'Escape')) {
+        G.mode = 'pause';
+        showScreen(G, 'pause');
+      } else {
+        // Proximity for the E key.
+        G.nearVehicle = G.player.onFoot ? nearestVehicle(G, G.player.pos, 4.5) : null;
+        const dx = G.player.pos.x - GARAGE.pos.x;
+        const dz = G.player.pos.z - GARAGE.pos.z;
+        G.nearGarage = Math.sqrt(dx * dx + dz * dz) < 12;
+        handleInteract(G);
+        if (G.player.onFoot) updatePlayerOnFoot(G, dt);
+        else updatePlayerVehicle(G, dt);
+        G.playerMesh.visible = G.player.onFoot;
+        G.playerMesh.position.set(G.player.pos.x, G.player.pos.y, G.player.pos.z);
+        updateTraffic(G, dt);
+        updatePeds(G, dt);
+        updateWanted(G, dt);
+        updatePolice(G, dt);
+        updateCombat(G, dt);
+        updateMission(G, dt);
+        updateDayNight(G, dt);
+        updateCamera(G, dt);
+        // Slow health recovery while the heat is off.
+        if (G.wanted === 0 && G.player.health < G.player.maxHealth) {
+          G.player.health = Math.min(G.player.maxHealth, G.player.health + 2 * dt);
+        }
+        updateHud(G);
+      }
+    } else if (G.mode === 'busted') {
+      updateCamera(G, dt);
+      updateHud(G);
+    }
+
+    if (G.mode !== 'menu') {
+      // The menu orbit already positioned the camera; otherwise render.
+    }
+    G.renderer.render(G.scene, G.camera);
+    if (firstFrame) {
+      firstFrame = false;
+      statusEl.textContent = 'ready';
+    }
+    if (shot.shot && G.frames === 150) {
+      window.__shotReady = true;
+    }
+    clearPressed(G.input);
+  }
+  frame();
 }
 
-// Boot.
-document.getElementById('hud').style.display = 'none';
-hud.showStart(save, startGame);
-const shot = applyShot(game);
-if (shot === 'start') {
-  // Stay on the menu; the start screen is the shot.
-}
-window.__game = game;
-window.__shot = shot;
-requestAnimationFrame(frame);
+main();

@@ -1,114 +1,58 @@
-// Renderer, third-person camera rig and the day/night cycle:
-// one sun, one sky colour and one fog that all follow the clock.
+// Rendering for Solmar Bay: the WebGL renderer and the third-person follow
+// camera. The camera trails the player or their vehicle, eases toward the
+// heading, and lets the mouse drag orbit it.
 
 const THREE = window.THREE;
 
-export function createRenderer(container) {
-  const renderer = new THREE.WebGLRenderer({ antialias: true });
+export function createRenderer(G) {
+  const canvas = document.getElementById('game');
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-  renderer.setSize(container.clientWidth || window.innerWidth, container.clientHeight || window.innerHeight);
-  renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  container.appendChild(renderer.domElement);
-
-  const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x87bfe8);
-  scene.fog = new THREE.Fog(0x87bfe8, 180, 700);
-
-  const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 1200);
-  camera.position.set(0, 40, 80);
-
-  const sun = new THREE.DirectionalLight(0xfff2d8, 2.4);
-  sun.position.set(120, 180, 60);
-  sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
-  sun.shadow.camera.left = -280;
-  sun.shadow.camera.right = 280;
-  sun.shadow.camera.top = 280;
-  sun.shadow.camera.bottom = -280;
-  sun.shadow.camera.far = 700;
-  sun.shadow.bias = -0.0006;
-  scene.add(sun);
-  scene.add(sun.target);
-
-  const hemi = new THREE.HemisphereLight(0xbfd8ff, 0x8a7a5a, 0.9);
-  scene.add(hemi);
-
-  function resize() {
-    const w = container.clientWidth || window.innerWidth;
-    const h = container.clientHeight || window.innerHeight;
-    camera.aspect = w / h;
-    camera.updateProjectionMatrix();
-    renderer.setSize(w, h);
-  }
-  window.addEventListener('resize', resize);
-
-  return { renderer, scene, camera, sun, hemi, resize };
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  G.renderer = renderer;
+  G.camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 1200);
+  window.addEventListener('resize', () => {
+    G.camera.aspect = window.innerWidth / window.innerHeight;
+    G.camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
 }
 
-// timeOfDay is 0..1 (0 = midnight, 0.5 = noon). Returns the night
-// factor 0 (full day) .. 1 (full night) for lamps and windows.
-export function updateDayNight(env, timeOfDay) {
-  const { scene, sun, hemi } = env;
-  const angle = timeOfDay * Math.PI * 2 - Math.PI / 2; // noon = overhead
-  const elev = Math.sin(angle);
-  const azim = Math.cos(angle);
-  sun.position.set(azim * 260, Math.max(12, elev * 260), 120);
-  const day = Math.max(0, Math.min(1, elev * 1.6 + 0.25));
-  const night = 1 - day;
-  sun.intensity = 0.25 + day * 2.2;
-  sun.color.setHex(day > 0.6 ? 0xfff2d8 : 0xffb070);
-  hemi.intensity = 0.25 + day * 0.65;
-  const skyDay = new THREE.Color(0x87bfe8);
-  const skyDusk = new THREE.Color(0xe88a5a);
-  const skyNight = new THREE.Color(0x0a1428);
-  const sky = new THREE.Color();
-  if (elev > 0.25) sky.copy(skyDay);
-  else if (elev > -0.08) sky.copy(skyDay).lerp(skyDusk, 1 - (elev + 0.08) / 0.33);
-  else sky.copy(skyDusk).lerp(skyNight, Math.min(1, (-elev - 0.08) / 0.3));
-  scene.background = sky;
-  scene.fog.color.copy(sky);
-  return night;
-}
-
-// Third-person follow camera with mouse orbit and wheel zoom.
-export function createCameraRig(camera) {
-  const rig = {
-    yaw: Math.PI,
-    pitch: 0.42,
-    dist: 11,
-    pos: new THREE.Vector3(0, 30, 60),
-  };
-
-  // Follow a target position and heading. dt smooths the motion.
-  rig.update = function update(target, heading, dt, input, snap) {
-    rig.yaw -= (input ? input.mouseDX : 0) * 0.005;
-    rig.pitch += (input ? input.mouseDY : 0) * 0.004;
-    rig.pitch = Math.max(0.12, Math.min(1.1, rig.pitch));
-    if (input) rig.dist = Math.max(6, Math.min(18, rig.dist + input.wheel * 0.01));
-    const cx = target.x - Math.sin(rig.yaw) * Math.cos(rig.pitch) * rig.dist;
-    const cz = target.z - Math.cos(rig.yaw) * Math.cos(rig.pitch) * rig.dist;
-    const cy = target.y + 2 + Math.sin(rig.pitch) * rig.dist;
-    const want = new THREE.Vector3(cx, cy, cz);
-    if (snap) {
-      rig.pos.copy(want);
-    } else {
-      const k = 1 - Math.exp(-dt * 7);
-      rig.pos.lerp(want, k);
+export function updateCamera(G, dt) {
+  if (G.cameraOverride) {
+    if (G.cameraOverride.follow) {
+      // A staged shot: the camera tracks the player from a fixed side
+      // offset, so the action never drives out of frame.
+      const target = G.player.vehicle ? G.player.vehicle.pos : G.player.pos;
+      const o = G.cameraOverride;
+      G.camera.position.set(target.x + o.dx, target.y + o.height, target.z + o.dz);
+      G.camera.lookAt(target.x + o.lookX, target.y + 1.5, target.z + o.lookZ);
+      return;
     }
-    camera.position.copy(rig.pos);
-    camera.lookAt(target.x, target.y + 1.6, target.z);
+    G.camera.position.copy(G.cameraOverride.pos);
+    G.camera.lookAt(G.cameraOverride.look);
+    return;
+  }
+  const input = G.input;
+  G.orbitX = (G.orbitX || 0) + (input.lookDX || 0) * 0.004;
+  G.orbitY = Math.max(-0.1, Math.min(0.7, (G.orbitY || 0.25) + (input.lookDY || 0) * 0.003));
+  const target = G.player.vehicle ? G.player.vehicle.pos : G.player.pos;
+  const heading = G.player.vehicle ? G.player.vehicle.angle : G.player.angle;
+  // The camera eases toward the heading so turns feel smooth, not snappy.
+  let targetYaw = heading + G.orbitX;
+  let diff = targetYaw - G.cameraYaw;
+  while (diff > Math.PI) diff -= Math.PI * 2;
+  while (diff < -Math.PI) diff += Math.PI * 2;
+  G.cameraYaw += diff * Math.min(1, dt * (G.player.vehicle ? 3.5 : 6));
+  const dist = G.player.vehicle ? 10.5 : 7.5;
+  const height = G.player.vehicle ? 4.2 : 3.4;
+  const fx = -Math.sin(G.cameraYaw);
+  const fz = -Math.cos(G.cameraYaw);
+  const camPos = {
+    x: target.x - fx * dist,
+    y: target.y + height + Math.sin(G.orbitY) * 4,
+    z: target.z - fz * dist,
   };
-
-  // Slow cinematic orbit for the start screen.
-  rig.orbit = function orbit(center, radius, angle, height) {
-    camera.position.set(
-      center.x + Math.sin(angle) * radius,
-      height,
-      center.z + Math.cos(angle) * radius,
-    );
-    camera.lookAt(center.x, 6, center.z);
-  };
-
-  return rig;
+  G.camera.position.set(camPos.x, camPos.y, camPos.z);
+  G.camera.lookAt(target.x + fx * 5, target.y + 1.6, target.z + fz * 5);
 }

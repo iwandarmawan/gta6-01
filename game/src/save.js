@@ -1,34 +1,43 @@
-// Save game: cash, story progress and best wanted level, kept in
-// localStorage. Every call is guarded — a browser that blocks
-// storage simply plays without saving.
+// Save and load for Solmar Bay: cash, finished missions, garage upgrades and
+// the best taxi streak, kept in localStorage under one key. A missing or
+// broken save is a fresh start, never an error.
 
-import { SAVE_KEY } from './config.js';
-
-export function defaultSave() {
-  return { cash: 200, missionsDone: 0, bestWanted: 0, storyComplete: false, muted: false };
-}
+const KEY = 'solmar-bay-save-v1';
 
 export function loadSave() {
-  const save = defaultSave();
   try {
-    const raw = window.localStorage.getItem(SAVE_KEY);
-    if (!raw) return save;
+    const raw = localStorage.getItem(KEY);
+    if (!raw) return null;
     const data = JSON.parse(raw);
-    if (typeof data.cash === 'number') save.cash = data.cash;
-    if (typeof data.missionsDone === 'number') save.missionsDone = data.missionsDone;
-    if (typeof data.bestWanted === 'number') save.bestWanted = data.bestWanted;
-    if (typeof data.storyComplete === 'boolean') save.storyComplete = data.storyComplete;
-    if (typeof data.muted === 'boolean') save.muted = data.muted;
+    if (!data || typeof data.cash !== 'number') return null;
+    return {
+      cash: data.cash,
+      completed: Array.isArray(data.completed) ? data.completed : [],
+      upgrades: data.upgrades || { engine: false, armor: false },
+      fares: data.fares || 0,
+    };
   } catch (err) {
-    // Storage unavailable or corrupt: play with a fresh save.
+    return null;
   }
-  return save;
 }
 
-export function storeSave(save) {
+export function writeSave(G) {
   try {
-    window.localStorage.setItem(SAVE_KEY, JSON.stringify(save));
+    localStorage.setItem(KEY, JSON.stringify({
+      cash: Math.round(G.player.cash),
+      completed: G.completed,
+      upgrades: G.upgrades,
+      fares: G.stats.fares,
+    }));
   } catch (err) {
-    // Storage unavailable: nothing to do.
+    // Storage can be full or blocked; the game plays on regardless.
+  }
+}
+
+export function clearSave() {
+  try {
+    localStorage.removeItem(KEY);
+  } catch (err) {
+    // Ignore: nothing depends on the removal succeeding.
   }
 }

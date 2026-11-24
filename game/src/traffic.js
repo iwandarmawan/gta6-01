@@ -1,62 +1,85 @@
-// Traffic: cars that drive the city's road loops all day, slowing
-// for the car ahead of them and for the player.
-
-import { TUNING, TRAFFIC_LOOPS, PALETTE } from './config.js';
-import { makeCar } from './cars.js';
+// Street traffic for Solmar Bay: ordinary cars looping the road grid. Each
+// car follows one rectangular loop, slows for the car ahead, and keeps the
+// city feeling alive behind the player's own driving.
 
 const THREE = window.THREE;
+import { VEHICLES } from './config.js';
+import { makeRng, pick, range } from './rng.js';
+import { createVehicleMesh } from './cars.js';
+import { groundHeight } from './city.js';
 
-function dist2(ax, az, bx, bz) {
-  const dx = ax - bx;
-  const dz = az - bz;
-  return dx * dx + dz * dz;
-}
-
-export function createTraffic(scene, city, rng) {
-  const cars = [];
-  for (let i = 0; i < TUNING.trafficCount; i++) {
-    const loop = TRAFFIC_LOOPS[i % TRAFFIC_LOOPS.length];
-    const wp = Math.floor(rng.next() * loop.length);
-    const [x, z] = loop[wp];
-    const car = makeCar(scene, x + rng.range(-2, 2), z + rng.range(-2, 2), rng.range(0, Math.PI * 2), rng.pick(PALETTE.car), false);
-    cars.push({
-      car, loop, wp,
-      speed: rng.range(8, 12),
-      targetSpeed: rng.range(8, 12),
+export function spawnTraffic(G) {
+  const rng = makeRng(4242);
+  G.traffic = [];
+  const loops = G.city.trafficLoops;
+  for (let i = 0; i < 14; i++) {
+    const loop = loops[i % loops.length];
+    const kind = pick(rng, ['sedan', 'sedan', 'pickup']);
+    const color = pick(rng, VEHICLES[kind].colors);
+    const mesh = createVehicleMesh(G, kind, color);
+    G.scene.add(mesh);
+    // Start on a random edge of the loop, heading along it.
+    const edge = Math.floor(rng() * 4);
+    let x;
+    let z;
+    let angle;
+    if (edge === 0) { x = range(rng, loop.x0, loop.x1); z = loop.z0; angle = -Math.PI / 2; }
+    else if (edge === 1) { x = loop.x1; z = range(rng, loop.z0, loop.z1); angle = Math.PI; }
+    else if (edge === 2) { x = range(rng, loop.x0, loop.x1); z = loop.z1; angle = Math.PI / 2; }
+    else { x = loop.x0; z = range(rng, loop.z0, loop.z1); angle = 0; }
+    mesh.position.set(x, 0, z);
+    mesh.rotation.y = angle;
+    G.traffic.push({
+      kind, mesh, loop, edge, angle,
+      speed: range(rng, 8, 12),
+      pos: mesh.position,
     });
   }
+}
 
-  function update(dt, playerCar) {
-    for (const t of cars) {
-      const { car, loop } = t;
-      const [tx, tz] = loop[t.wp];
-      const dx = tx - car.pos.x;
-      const dz = tz - car.pos.z;
-      const dist = Math.hypot(dx, dz);
-      if (dist < 5) {
-        t.wp = (t.wp + 1) % loop.length;
-        continue;
-      }
-      // Slow for the car ahead, including the player's car.
-      let slow = false;
-      if (playerCar && dist2(car.pos.x, car.pos.z, playerCar.pos.x, playerCar.pos.z) < 90) slow = true;
-      for (const other of cars) {
-        if (other === t) continue;
-        if (dist2(car.pos.x, car.pos.z, other.car.pos.x, other.car.pos.z) < 64) { slow = true; break; }
-      }
-      const want = slow ? 0 : t.targetSpeed;
-      t.speed += (want - t.speed) * Math.min(1, dt * 1.5);
-      const wantHeading = Math.atan2(dx, dz);
-      let diff = wantHeading - car.heading;
-      while (diff > Math.PI) diff -= Math.PI * 2;
-      while (diff < -Math.PI) diff += Math.PI * 2;
-      car.heading += Math.max(-1.6 * dt, Math.min(1.6 * dt, diff));
-      car.pos.x += Math.sin(car.heading) * t.speed * dt;
-      car.pos.z += Math.cos(car.heading) * t.speed * dt;
-      car.group.rotation.y = car.heading;
-      for (const w of car.wheels) w.rotation.y += t.speed * dt * 1.4;
+function cornerOf(loop, edge) {
+  if (edge === 0) return { x: loop.x1, z: loop.z0 };
+  if (edge === 1) return { x: loop.x1, z: loop.z1 };
+  if (edge === 2) return { x: loop.x0, z: loop.z1 };
+  return { x: loop.x0, z: loop.z0 };
+}
+
+export function updateTraffic(G, dt) {
+  for (const car of G.traffic) {
+    // Slow down for the car directly ahead.
+    let target = 10;
+    for (const other of G.traffic) {
+      if (other === car) continue;
+      const dx = other.pos.x - car.pos.x;
+      const dz = other.pos.z - car.pos.z;
+      const ahead = -Math.sin(car.angle) * dx + -Math.cos(car.angle) * dz;
+      const side = Math.cos(car.angle) * dx + -Math.sin(car.angle) * dz;
+      if (ahead > 0 && ahead < 9 && Math.abs(side) < 3) target = 0;
     }
+    // Slow down for the player's car ahead too.
+    if (G.player.vehicle) {
+      const dx = G.player.vehicle.pos.x - car.pos.x;
+      const dz = G.player.vehicle.pos.z - car.pos.z;
+      const ahead = -Math.sin(car.angle) * dx + -Math.cos(car.angle) * dz;
+      const side = Math.cos(car.angle) * dx + -Math.sin(car.angle) * dz;
+      if (ahead > 0 && ahead < 9 && Math.abs(side) < 3) target = 0;
+    }
+    car.speed += (target - car.speed) * Math.min(1, dt * 1.5);
+    const fx = -Math.sin(car.angle);
+    const fz = -Math.cos(car.angle);
+    car.pos.x += fx * car.speed * dt;
+    car.pos.z += fz * car.speed * dt;
+    const corner = cornerOf(car.loop, car.edge);
+    const dx = corner.x - car.pos.x;
+    const dz = corner.z - car.pos.z;
+    if (Math.abs(dx) < 2 && Math.abs(dz) < 2) {
+      car.edge = (car.edge + 1) % 4;
+      car.angle = [-Math.PI / 2, Math.PI, Math.PI / 2, 0][car.edge];
+    }
+    car.pos.y = groundHeight(car.pos.x, car.pos.z);
+    car.mesh.position.copy(car.pos);
+    car.mesh.rotation.y = car.angle;
+    const wheels = car.mesh.userData.wheels || [];
+    for (const w of wheels) w.mesh.rotation.x += (car.speed / 0.38) * dt;
   }
-
-  return { cars, update };
 }

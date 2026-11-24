@@ -1,147 +1,145 @@
-// Solmar Bay — tuning, layout and content data for the whole game.
-// One place holds every number the other modules share, so the city,
-// the missions and the HUD always agree about where things are.
+// Solmar Bay configuration: the island layout, the palette, the vehicles,
+// the garage prices and the mission arc. One place for every number the
+// rest of the game reads, so a tweak never means hunting through files.
 
-// World layout: a coastal island, x in [-260, 260], z in [-200, 200].
-// A water channel at x in [110, 150] splits Downtown (west) from
-// Portside (east); one bridge at z in [-14, 14] joins them.
 export const WORLD = {
-  minX: -260, maxX: 260, minZ: -200, maxZ: 200,
-  landMinX: -240, landMaxX: 240, landMinZ: -180, landMaxZ: 180,
-  channelMinX: 110, channelMaxX: 150,
-  bridgeMinZ: -14, bridgeMaxZ: 14,
-  waterY: -0.7,
-  seed: 1337,
+  minX: -220,
+  maxX: 220,
+  minZ: -180,
+  maxZ: 180,
+  coastZ: 180,
+  westX: -220,
+  // The channel cuts in from the south coast; the bridge road crosses it.
+  channel: { x0: 30, x1: 90, z0: 90, z1: 180 },
+  bridgeZ: 120,
+  bridgeX0: 30,
+  bridgeX1: 90,
 };
 
-// Named places every system uses (missions, world art, minimap).
-export const PLACES = {
-  garage: { x: -50, z: -60, label: "Rico's Garage" },
-  hotel: { x: 70, z: -120, label: 'Solmar Grand Hotel' },
-  hotelFront: { x: 70, z: -105, label: 'Solmar Grand Hotel entrance' },
-  marina: { x: 225, z: 60, label: 'Marina Bay' },
-  dock: { x: 232, z: 72, label: 'Marina Dock' },
-  buoy: { x: 305, z: 150, label: 'Harbour Buoy' },
-  lighthouse: { x: -225, z: 165, label: 'South Point Light' },
-  beach: { x: -60, z: 168, label: 'Coral Beach' },
-  plaza: { x: 0, z: 0, label: 'Liberty Plaza' },
-  packages: [
-    { x: -135, z: -95, label: 'Package 1 — North Arcade' },
-    { x: 35, z: 125, label: 'Package 2 — Palm Court' },
-    { x: 185, z: -95, label: 'Package 3 — Portside Yard' },
-  ],
-  playerStart: { x: -50, z: -44, heading: Math.PI },
+export const ROADS_X = [-200, -160, -120, -80, -40, 0, 40, 80, 120, 160, 200];
+export const ROADS_Z = [-160, -120, -80, -40, 0, 40, 80, 120, 160];
+export const ROAD_WIDTH = 10;
+export const BLOCK = 40;
+
+export const PALETTE = {
+  land: 0x9db380,
+  sand: 0xe8d9a0,
+  sea: 0x2e7f9e,
+  seaDeep: 0x1d5a74,
+  road: 0x3a3a40,
+  sidewalk: 0xb9b3a4,
+  building: [0xf2e3c6, 0xe8b48c, 0xd98a6a, 0x9fc3d4, 0xf6d98c, 0xc9a6c9, 0x8fb8a8, 0xe8e0d0],
+  roof: [0x8a4a3a, 0x5a6a7a, 0x7a7a6a, 0x4a5a6a],
+  palmTrunk: 0x7a5a38,
+  palmLeaf: 0x3f8f4f,
+  lighthouse: 0xf2f2f2,
+  lighthouseTop: 0xd43a2a,
 };
 
-// Road centrelines. Traffic loops and the minimap are built from these.
-export const ROADS = [
-  // Downtown verticals
-  { x1: -200, z1: -150, x2: -200, z2: 150 },
-  { x1: -140, z1: -150, x2: -140, z2: 150 },
-  { x1: -80, z1: -150, x2: -80, z2: 150 },
-  { x1: -20, z1: -150, x2: -20, z2: 150 },
-  { x1: 40, z1: -150, x2: 40, z2: 150 },
-  { x1: 100, z1: -150, x2: 100, z2: 150 },
-  // Downtown horizontals
-  { x1: -200, z1: -150, x2: 100, z2: -150 },
-  { x1: -200, z1: -90, x2: 100, z2: -90 },
-  { x1: -200, z1: -30, x2: 100, z2: -30 },
-  { x1: -200, z1: 30, x2: 100, z2: 30 },
-  { x1: -200, z1: 90, x2: 100, z2: 90 },
-  { x1: -200, z1: 150, x2: 100, z2: 150 },
-  // Bridge road across the channel
-  { x1: 100, z1: 0, x2: 170, z2: 0 },
-  // Portside grid
-  { x1: 170, z1: -150, x2: 170, z2: 150 },
-  { x1: 210, z1: -150, x2: 210, z2: 150 },
-  { x1: 170, z1: -150, x2: 230, z2: -150 },
-  { x1: 170, z1: -90, x2: 230, z2: -90 },
-  { x1: 170, z1: 90, x2: 230, z2: 90 },
-  { x1: 170, z1: 150, x2: 230, z2: 150 },
-  // Coastal avenue along the south shore to the marina
-  { x1: -200, z1: 165, x2: 230, z2: 165 },
-];
+export const VEHICLES = {
+  sedan: { name: 'Solmar Sedan', topSpeed: 30, accel: 14, brake: 26, turn: 1.9, seats: 1, length: 4.4, width: 2.0, height: 1.4, colors: [0xc23a2e, 0x2e5ac2, 0xe8e0d0, 0x3a3a40, 0x2e8f5a] },
+  pickup: { name: 'Bay Pickup', topSpeed: 27, accel: 12, brake: 24, turn: 1.7, seats: 1, length: 5.2, width: 2.1, height: 1.7, colors: [0xd98a2a, 0x5a7a8a, 0x8a2a3a] },
+  bike: { name: 'Coast Runner', topSpeed: 34, accel: 18, brake: 30, turn: 2.6, seats: 1, length: 2.2, width: 0.8, height: 1.2, colors: [0xd4a017, 0x222222, 0xc23a2e] },
+  boat: { name: 'Marina Skiff', topSpeed: 24, accel: 10, brake: 14, turn: 1.4, seats: 1, length: 6.0, width: 2.4, height: 1.0, colors: [0xf2f2f2, 0x2e7f9e] },
+  police: { name: 'Solmar PD Interceptor', topSpeed: 33, accel: 16, brake: 28, turn: 2.1, seats: 1, length: 4.6, width: 2.0, height: 1.45, colors: [0x1a2a4a] },
+};
 
-// Rectangular loops traffic cars drive, as waypoint lists.
-export const TRAFFIC_LOOPS = [
-  [[-200, -150], [100, -150], [100, 150], [-200, 150]],
-  [[-140, -90], [-20, -90], [-20, 90], [-140, 90]],
-  [[-80, -30], [40, -30], [40, 30], [-80, 30]],
-  [[170, -150], [210, -150], [210, 150], [170, 150]],
-  [[100, 0], [170, 0], [170, 165], [-200, 165], [-200, 150], [100, 150]],
-];
+export const GARAGE = {
+  pos: { x: -20, z: 24 },
+  repairCost: 50,
+  engineCost: 400,
+  armorCost: 300,
+  engineBonus: 1.25,
+  armorBonus: 50,
+};
 
-// Mission definitions in story order.
+export const START = { pos: { x: -8, z: -8 }, angle: Math.PI * 0.75 };
+
+export const DAY_LENGTH = 240; // seconds for one full day/night cycle
+
+// The story arc: Rico Marlowe, new in Solmar Bay, runs jobs for Vera Costa.
 export const MISSIONS = [
   {
-    id: 'harbour-hustle',
-    name: 'Harbour Hustle',
-    briefing: 'A client waits at Marina Bay. Pick them up, then drop them at the Solmar Grand Hotel before the clock runs out.',
+    id: 'first-wheels',
+    title: 'First Wheels',
+    giver: 'Vera Costa',
+    brief: 'Vera needs wheels. Steal any car and bring it to the garage on Marlin Street.',
     reward: 150,
-    timeLimit: 150,
     steps: [
-      { kind: 'goto', label: 'Drive to the client at Marina Bay', target: 'marina' },
-      { kind: 'goto', label: 'Drop the client at the Solmar Grand Hotel', target: 'hotelFront' },
-    ],
-  },
-  {
-    id: 'package-run',
-    name: 'Package Run',
-    briefing: 'Three parcels are stashed around the city. Collect them all and bring them to Rico\'s Garage. The law will not like it — each pickup draws heat.',
-    reward: 250,
-    timeLimit: 240,
-    steps: [
-      { kind: 'collect', label: 'Collect the package at North Arcade', target: 'packages.0' },
-      { kind: 'collect', label: 'Collect the package at Palm Court', target: 'packages.1' },
-      { kind: 'collect', label: 'Collect the package at Portside Yard', target: 'packages.2' },
-      { kind: 'goto', label: 'Deliver the parcels to Rico\'s Garage', target: 'garage' },
+      { type: 'enter', vehicle: 'any', text: 'Steal a car (walk up and press E)' },
+      { type: 'goto', x: -20, z: 24, radius: 8, text: 'Drive to Rico\u2019s Garage' },
     ],
   },
   {
     id: 'harbour-escape',
-    name: 'Harbour Escape',
-    briefing: 'Take the boat from Marina Dock, sail out to the harbour buoy, then bring her back to the dock. Watch the hull — and the law.',
-    reward: 400,
-    timeLimit: 260,
+    title: 'Harbour Escape',
+    giver: 'Vera Costa',
+    brief: 'The heat is on. Take the skiff from the marina, run the channel and reach the lighthouse point.',
+    reward: 300,
+    wanted: 2,
     steps: [
-      { kind: 'board', label: 'Board the boat at Marina Dock', target: 'dock' },
-      { kind: 'goto', label: 'Sail to the harbour buoy', target: 'buoy', vehicle: 'boat' },
-      { kind: 'goto', label: 'Bring the boat back to Marina Dock', target: 'dock', vehicle: 'boat' },
+      { type: 'enter', vehicle: 'boat', text: 'Board the skiff at the marina (press E)' },
+      { type: 'goto', x: -196, z: 150, radius: 10, text: 'Reach the lighthouse point' },
+    ],
+  },
+  {
+    id: 'taxi-fare',
+    title: 'City Taxi',
+    giver: 'Vera Costa',
+    brief: 'A fare is waiting at Palm Plaza. Pick them up and drop them at the airfield before the clock runs out.',
+    reward: 250,
+    timeLimit: 90,
+    steps: [
+      { type: 'goto', x: 0, z: 0, radius: 8, text: 'Pick up the fare at Palm Plaza' },
+      { type: 'goto', x: 165, z: -155, radius: 10, text: 'Drop the fare at Solmar Airfield' },
+    ],
+  },
+  {
+    id: 'courier',
+    title: 'Sunset Courier',
+    giver: 'Vera Costa',
+    brief: 'Three parcels, three drops, one sunset. Deliver them all before the timer runs out.',
+    reward: 400,
+    timeLimit: 120,
+    steps: [
+      { type: 'goto', x: -160, z: -120, radius: 8, text: 'Drop 1 of 3: North Row' },
+      { type: 'goto', x: 160, z: 80, radius: 8, text: 'Drop 2 of 3: Portside Market' },
+      { type: 'goto', x: -120, z: 120, radius: 8, text: 'Drop 3 of 3: Marina Steps' },
+    ],
+  },
+  {
+    id: 'stunt-jump',
+    title: 'Rooftop Leap',
+    giver: 'Vera Costa',
+    brief: 'There is a jump ramp by the bridge. Hit it fast and land inside the marked zone.',
+    reward: 350,
+    steps: [
+      { type: 'enter', vehicle: 'any', text: 'Get in a car first' },
+      { type: 'jump', x: 60, z: 120, radius: 14, text: 'Hit the ramp and land in the zone' },
+    ],
+  },
+  {
+    id: 'lighthouse-cache',
+    title: 'Lighthouse Cache',
+    giver: 'Vera Costa',
+    brief: 'Five packages are stashed around the bay. Find them all and Vera pays for every one.',
+    reward: 500,
+    steps: [
+      { type: 'collect', count: 5, text: 'Collect the stashed packages (0/5)' },
     ],
   },
 ];
 
-// Movement, combat, police and economy tuning.
-export const TUNING = {
-  walkSpeed: 6, runSpeed: 10.5, playerRadius: 0.7,
-  carAccel: 14, carBrake: 26, carMaxSpeed: 34, carMaxReverse: 10,
-  carTurn: 1.9, carGrip: 6.5, carRadius: 1.9, carHealth: 100,
-  boatAccel: 8, boatMaxSpeed: 20, boatTurn: 1.1, boatRadius: 2.4,
-  trafficSpeed: 10, trafficCount: 10, pedCount: 14,
-  playerHealth: 100, repairCost: 50,
-  heatPerPunch: 25, heatPerPackage: 20, heatPerRam: 20, heatDecay: 2.2,
-  policeBustTime: 2.5, policeBustRange: 4.5,
-  dayLength: 300,
-};
+export const CACHE_SPOTS = [
+  { x: -180, z: -140 },
+  { x: 180, z: -40 },
+  { x: -60, z: 160 },
+  { x: 120, z: 160 },
+  { x: -196, z: 60 },
+];
 
-// Key bindings (KeyboardEvent.code values).
-export const KEYS = {
-  up: ['KeyW', 'ArrowUp'], down: ['KeyS', 'ArrowDown'],
-  left: ['KeyA', 'ArrowLeft'], right: ['KeyD', 'ArrowRight'],
-  run: ['ShiftLeft', 'ShiftRight'], brake: ['Space'],
-  enter: ['KeyE'], punch: ['KeyF'], pause: ['KeyP', 'Escape'],
-  mute: ['KeyM'], retry: ['KeyR'],
-};
-
-// Palettes: sun-soaked coastal city.
-export const PALETTE = {
-  building: [0xf5efe0, 0xe8dcc0, 0xd9a066, 0x9fc3d8, 0xa8c686, 0xd8d8d8, 0xf2b8a0, 0x8fb8a8],
-  roof: [0x8a7a66, 0x6b7c8c, 0xb0563a],
-  road: 0x3a3f46, sidewalk: 0x9a938a, sand: 0xe8d49a,
-  grass: 0x7fae62, sea: 0x2e7fa8, skyDay: 0x87bfe8,
-  car: [0xc23b2e, 0x2e5fa8, 0xe8c832, 0x3aa655, 0xeeeeee, 0x222222, 0x7a4a9e],
-  police: 0xe8e8e8,
-};
-
-// Save key for localStorage.
-export const SAVE_KEY = 'solmar-bay-save-v1';
+export const TAXI_FARES = [
+  { from: { x: 0, z: 0 }, to: { x: 165, z: -155 }, pay: 120 },
+  { from: { x: -160, z: 80 }, to: { x: 160, z: -80 }, pay: 150 },
+  { from: { x: 120, z: 160 }, to: { x: -180, z: -120 }, pay: 140 },
+];

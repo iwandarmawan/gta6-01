@@ -1,93 +1,71 @@
-// Keyboard and mouse input: held keys, edge-triggered presses,
-// camera orbit drag and wheel zoom. No pointer lock, so it also
-// works in a headless screenshot run.
+// Keyboard and mouse input for Solmar Bay. Tracks held keys, one-shot key
+// presses (edges) and the camera drag, so the game loop reads state instead
+// of wiring listeners everywhere.
 
-export function createInput(target) {
-  const down = new Set();
-  const pressed = new Set();
-  const state = {
-    down,
-    pressed,
-    mouseDX: 0,
-    mouseDY: 0,
-    wheel: 0,
+export function createInput() {
+  const input = {
+    keys: {},
+    pressed: {},
+    mouseX: 0,
+    mouseY: 0,
     dragging: false,
-    anyKey: false,
+    lookDX: 0,
+    lookDY: 0,
   };
 
-  function codeOf(e) {
-    return e.code || e.key;
-  }
-
-  function onKeyDown(e) {
-    const c = codeOf(e);
-    if (!c) return;
-    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(c)) {
-      e.preventDefault();
+  window.addEventListener('keydown', (event) => {
+    if (event.repeat) return;
+    input.keys[event.code] = true;
+    input.pressed[event.code] = true;
+    if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.code)) {
+      event.preventDefault();
     }
-    if (!down.has(c)) pressed.add(c);
-    down.add(c);
-    state.anyKey = true;
-  }
+  });
+  window.addEventListener('keyup', (event) => {
+    input.keys[event.code] = false;
+  });
+  window.addEventListener('blur', () => {
+    input.keys = {};
+    input.dragging = false;
+  });
+  window.addEventListener('mousedown', (event) => {
+    if (event.button === 0) input.dragging = true;
+    input.mouseX = event.clientX;
+    input.mouseY = event.clientY;
+  });
+  window.addEventListener('mouseup', () => {
+    input.dragging = false;
+  });
+  window.addEventListener('mousemove', (event) => {
+    if (!input.dragging) return;
+    input.lookDX += event.clientX - input.mouseX;
+    input.lookDY += event.clientY - input.mouseY;
+    input.mouseX = event.clientX;
+    input.mouseY = event.clientY;
+  });
+  return input;
+}
 
-  function onKeyUp(e) {
-    down.delete(codeOf(e));
-  }
+export function keyHeld(input, code) {
+  return !!input.keys[code];
+}
 
-  function onBlur() {
-    down.clear();
-  }
+export function keyPressed(input, code) {
+  return !!input.pressed[code];
+}
 
-  let lastX = 0;
-  let lastY = 0;
-  function onMouseDown(e) {
-    state.dragging = true;
-    lastX = e.clientX;
-    lastY = e.clientY;
-  }
-  function onMouseMove(e) {
-    if (!state.dragging) return;
-    state.mouseDX += e.clientX - lastX;
-    state.mouseDY += e.clientY - lastY;
-    lastX = e.clientX;
-    lastY = e.clientY;
-  }
-  function onMouseUp() {
-    state.dragging = false;
-  }
-  function onWheel(e) {
-    state.wheel += e.deltaY;
-    e.preventDefault();
-  }
+export function clearPressed(input) {
+  input.pressed = {};
+  input.lookDX = 0;
+  input.lookDY = 0;
+}
 
-  target.addEventListener('keydown', onKeyDown);
-  target.addEventListener('keyup', onKeyUp);
-  target.addEventListener('blur', onBlur);
-  target.addEventListener('mousedown', onMouseDown);
-  target.addEventListener('mousemove', onMouseMove);
-  target.addEventListener('mouseup', onMouseUp);
-  target.addEventListener('wheel', onWheel, { passive: false });
-
-  // True while any of the given codes is held.
-  state.isDown = function isDown(codes) {
-    for (const c of codes) if (down.has(c)) return true;
-    return false;
-  };
-
-  // True once, on the frame the key went down.
-  state.wasPressed = function wasPressed(codes) {
-    for (const c of codes) if (pressed.has(c)) return true;
-    return false;
-  };
-
-  // Call once per frame after the game has read the input.
-  state.endFrame = function endFrame() {
-    pressed.clear();
-    state.mouseDX = 0;
-    state.mouseDY = 0;
-    state.wheel = 0;
-    state.anyKey = false;
-  };
-
-  return state;
+export function moveAxes(input) {
+  let x = 0;
+  let z = 0;
+  if (input.keys.KeyW || input.keys.ArrowUp) z -= 1;
+  if (input.keys.KeyS || input.keys.ArrowDown) z += 1;
+  if (input.keys.KeyA || input.keys.ArrowLeft) x -= 1;
+  if (input.keys.KeyD || input.keys.ArrowRight) x += 1;
+  return { x, z };
 }
