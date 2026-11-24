@@ -1,7 +1,4 @@
-// Save and load for Solmar Bay: cash, finished missions, garage upgrades and
-// the best taxi streak, kept in localStorage under one key. A missing or
-// broken save is a fresh start, never an error.
-
+// Save and load the player's progress (cash, upgrades, finished missions) in localStorage.
 const KEY = 'solmar-bay-save-v1';
 
 export function loadSave() {
@@ -9,35 +6,33 @@ export function loadSave() {
     const raw = localStorage.getItem(KEY);
     if (!raw) return null;
     const data = JSON.parse(raw);
-    if (!data || typeof data.cash !== 'number') return null;
-    return {
-      cash: data.cash,
-      completed: Array.isArray(data.completed) ? data.completed : [],
-      upgrades: data.upgrades || { engine: false, armor: false },
-      fares: data.fares || 0,
-    };
-  } catch (err) {
+    if (typeof data !== 'object' || data === null) return null;
+    return data;
+  } catch {
     return null;
   }
 }
 
-export function writeSave(G) {
+export function writeSave(state) {
   try {
-    localStorage.setItem(KEY, JSON.stringify({
-      cash: Math.round(G.player.cash),
-      completed: G.completed,
-      upgrades: G.upgrades,
-      fares: G.stats.fares,
-    }));
-  } catch (err) {
-    // Storage can be full or blocked; the game plays on regardless.
+    localStorage.setItem(
+      KEY,
+      JSON.stringify({
+        cash: state.cash,
+        engine: state.upgrades.engine,
+        armor: state.upgrades.armor,
+        done: [...state.done],
+      }),
+    );
+  } catch {
+    // Storage may be unavailable (private mode, quota): the game plays on without it.
   }
 }
 
 export function clearSave() {
   try {
     localStorage.removeItem(KEY);
-  } catch (err) {
-    // Ignore: nothing depends on the removal succeeding.
+  } catch {
+    // Nothing to clear.
   }
 }

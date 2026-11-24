@@ -1,94 +1,124 @@
-// Scripted screenshot staging for Solmar Bay: each ?shot= name drives the
-// game's own systems into a state worth photographing, then the game loop
-// runs it. Nothing here fakes pixels — the shots are the game itself.
+// Staged screenshots: `?shot=chase|play|drive|mission&seed=1` puts the game into
+// a fixed, deterministic state and a fixed camera, then reports #status ready.
+// The game itself renders every pixel: nothing is faked or composited.
+import { AIRFIELD, LIGHTHOUSE, MARINA, PLAZA } from './config.js';
+import { makeVehicle } from './cars.js';
+import { setBeacon } from './missions.js';
 
-import { startMission } from './missions.js';
-import { addWanted } from './police.js';
-import { spawnVehicle, enterVehicle } from './cars.js';
-
-export function parseShot() {
-  const params = new URLSearchParams(window.location.search);
-  return {
-    shot: params.get('shot') || null,
-    seed: Number(params.get('seed') || '1'),
-  };
+function placePlayer(G, x, z, heading) {
+  const P = G.player;
+  P.x = x;
+  P.z = z;
+  P.heading = heading;
+  P.mesh.position.set(x, 0, z);
+  P.mesh.rotation.y = heading;
 }
 
-// The staged camera tracks the player from a fixed side offset, so the
-// action never drives out of frame while the shot runs.
-function trackCamera(G, dx, height, dz, lookX, lookZ) {
-  G.cameraOverride = { follow: true, dx, height, dz, lookX, lookZ };
-}
-
-function stagePolice(G, x, z, angle) {
-  const v = spawnVehicle(G, 'police', x, z, angle, 0x1a2a4a);
-  v.police = true;
-  v.chaseSpeed = 12;
-  G.police.push(v);
+function giveVehicle(G, kind, x, z, heading, speed) {
+  const v = makeVehicle(kind, x, z, heading);
+  v.driver = 'player';
+  v.speed = speed;
+  G.scene.add(v.group);
+  G.player.vehicle = v;
+  G.player.x = x;
+  G.player.z = z;
+  G.player.heading = heading;
+  G.vehicles.push(v);
   return v;
 }
 
-export function applyShot(G, name) {
-  G.dayT = 0.55;
-  if (name === 'chase') {
-    // Cover: a police chase on the bridge road — wanted stars, the minimap,
-    // a mission objective, traffic and pedestrians in one frame.
-    G.dayT = 0.62;
-    const car = spawnVehicle(G, 'sedan', 0, 120, -Math.PI / 2, 0xc23a2e);
-    enterVehicle(G, car);
-    car.speed = 18;
-    G.shotAutoDrive = true;
-    startMission(G, 1);
-    // Skip the "board the skiff" step: the chase is already under way, so
-    // the objective reads "Reach the lighthouse point" instead.
-    G.mission.step = 1;
-    addWanted(G, 1);
-    // Police close behind the player so the chase reads in the frame.
-    stagePolice(G, -15, 122, -Math.PI / 2);
-    stagePolice(G, -25, 118, -Math.PI / 2);
-    // Traffic on the bridge road: a westbound sedan in the north lane and
-    // an eastbound pickup in the south lane, so the player passes both.
-    spawnVehicle(G, 'sedan', 50, 116, Math.PI / 2, 0x2e5ac2);
-    spawnVehicle(G, 'pickup', 80, 124, -Math.PI / 2, 0xd98a2a);
-    // Camera ahead-east and south of the player, looking back west down the
-    // road: the player comes toward the lens with the police behind it, and
-    // the road runs diagonally. Still north of the coast road.
-    trackCamera(G, 18, 9, 22, -12, 0);
-  } else if (name === 'foot') {
-    // On foot in the city: the plaza, the HUD and a mission beacon.
-    G.dayT = 0.45;
-    G.player.pos.set(-6, 0, 14);
-    G.player.angle = 0;
-    startMission(G, 0);
-    spawnVehicle(G, 'sedan', 24, 8, Math.PI / 2, 0x2e8f5a);
-    spawnVehicle(G, 'pickup', -40, -8, 0, 0xd98a2a);
-    // Look slightly north-east so the mission beacon over the sedan at
-    // (24, 8) comes into frame at the right edge.
-    trackCamera(G, 0, 4.5, 12, 10, -6);
-  } else if (name === 'drive') {
-    // Driving the coast road: the sea, the marina and the sunset light.
-    G.dayT = 0.55;
-    const car = spawnVehicle(G, 'pickup', -60, 160, -Math.PI / 2, 0xd98a2a);
-    enterVehicle(G, car);
-    car.speed = 16;
-    G.shotAutoDrive = true;
-    // City Taxi gives the drive a real objective instead of free roam.
-    startMission(G, 2);
-    spawnVehicle(G, 'sedan', -10, 160, -Math.PI / 2, 0xe8e0d0);
-    spawnVehicle(G, 'sedan', 30, 154, Math.PI / 2, 0x2e5ac2);
-    // Camera closer, lower and behind-left of the pickup, looking ahead
-    // down the coast road so the truck reads large and the sea is behind it.
-    trackCamera(G, -10, 5, -18, 8, 2);
-  } else if (name === 'mission') {
-    // Harbour Escape in progress: the skiff running the channel to the
-    // lighthouse, with the bridge and the police above it.
-    G.dayT = 0.5;
-    const boat = spawnVehicle(G, 'boat', 60, 150, Math.PI, 0xf2f2f2);
-    enterVehicle(G, boat);
-    boat.speed = 8;
-    G.shotAutoDrive = true;
-    startMission(G, 1);
-    stagePolice(G, 40, 120, -Math.PI / 2);
-    trackCamera(G, 0, 9, 26, 0, -6);
+function addPolice(G, spots) {
+  for (const [x, z, heading] of spots) {
+    const car = makeVehicle('police', x, z, heading);
+    car.driver = 'police';
+    car.speed = 24;
+    G.scene.add(car.group);
+    G.police.cars.push(car);
   }
+}
+
+function addTrafficCar(G, kind, x, z, heading, speed) {
+  const v = makeVehicle(kind, x, z, heading);
+  v.driver = 'traffic';
+  v.speed = speed;
+  G.scene.add(v.group);
+  G.traffic.push(v);
+  return v;
+}
+
+function fixedCamera(G, x, y, z, tx, ty, tz) {
+  G.shotCam = true;
+  G.camera.position.set(x, y, z);
+  G.camera.lookAt(tx, ty, tz);
+}
+
+// Stage one named shot. Called once after the world is built.
+export function stageShot(G, name) {
+  const P = G.player;
+  G.mode = 'shot';
+  G.hud.showMenu(false);
+  if (name === 'chase') {
+    // Cover: a police chase on the coast road north of the marina, three stars,
+    // mission objective up, the lighthouse ahead.
+    P.wanted = 3;
+    P.cash = 0;
+    giveVehicle(G, 'sedan', 168, -60, Math.PI, 22);
+    addPolice(G, [[168, -38, Math.PI], [164, -28, Math.PI]]);
+    addTrafficCar(G, 'pickup', 172, -120, Math.PI, 10);
+    addTrafficCar(G, 'sedan', 160, -150, 0, 11);
+    G.mission = { def: { id: 'harbour', name: 'Harbour Escape', pay: 300, text: 'Reach the lighthouse point' }, index: 1, stage: 1, timer: 0 };
+    setBeacon(G, LIGHTHOUSE[0], LIGHTHOUSE[1]);
+    G.hud.objective('Reach the lighthouse point');
+    fixedCamera(G, 158, 9, -2, 168, 1.5, -60);
+  } else if (name === 'play') {
+    // On foot at Palm Plaza, the mission beacon over the target sedan.
+    P.wanted = 0;
+    P.cash = 0;
+    placePlayer(G, 60, 60, Math.PI);
+    const target = makeVehicle('sedan', 60, 32, 0);
+    G.scene.add(target.group);
+    G.vehicles.push(target);
+    G.mission = { def: { id: 'wheels', name: 'First Wheels', pay: 150, text: 'Steal a car (walk up and press E)' }, index: 0, stage: 0, timer: 0 };
+    setBeacon(G, 60, 32);
+    G.hud.objective('Steal a car (walk up and press E)');
+    G.hud.banner('First Wheels — $150', 'Steal a car (walk up and press E)');
+    fixedCamera(G, 60, 6.5, 84, 60, 1.2, 26);
+  } else if (name === 'drive') {
+    // Driving the pickup down the coast road on a taxi job, clear of the marina docks.
+    P.wanted = 0;
+    P.cash = 0;
+    giveVehicle(G, 'pickup', 165, -40, Math.PI, 20);
+    addTrafficCar(G, 'sedan', 170, -90, Math.PI, 11);
+    addTrafficCar(G, 'pickup', 158, -130, 0, 10);
+    G.mission = { def: { id: 'taxi', name: 'City Taxi', pay: 250, text: 'Pick up the fare at Palm Plaza' }, index: 2, stage: 0, timer: 90 };
+    setBeacon(G, PLAZA[0], PLAZA[1]);
+    G.hud.objective('Pick up the fare at Palm Plaza — 90s');
+    fixedCamera(G, 165, 6, -8, 165, 1.5, -70);
+  } else if (name === 'mission') {
+    // The harbour escape: the skiff out on the open water by the marina, two stars,
+    // shot from the sea side so the MARINA sign stays out of frame.
+    P.wanted = 2;
+    P.cash = 0;
+    giveVehicle(G, 'boat', 200, 95, Math.PI, 11);
+    G.mission = { def: { id: 'harbour', name: 'Harbour Escape', pay: 300, text: 'Reach the lighthouse point' }, index: 1, stage: 1, timer: 0 };
+    setBeacon(G, LIGHTHOUSE[0], LIGHTHOUSE[1]);
+    G.hud.objective('Reach the lighthouse point');
+    fixedCamera(G, 210, 5, 120, 196, 1.5, 65);
+  }
+  // Let a few frames render, then report ready for the screenshot.
+  let frames = 0;
+  const tick = () => {
+    frames++;
+    if (frames >= 4) {
+      document.getElementById('status').textContent = 'ready';
+      return;
+    }
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+  return name;
+}
+
+export function shotNames() {
+  return ['chase', 'play', 'drive', 'mission'];
 }

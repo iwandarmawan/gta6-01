@@ -1,7 +1,5 @@
-// Seeded random numbers for Solmar Bay: one small deterministic generator
-// (mulberry32) plus helpers, so a staged scene plays the same way every run.
-
-export function makeRng(seed) {
+// A small seeded RNG so staged states and the city layout are reproducible.
+export function mulberry32(seed) {
   let a = seed >>> 0;
   return function next() {
     a |= 0;
@@ -12,18 +10,12 @@ export function makeRng(seed) {
   };
 }
 
-export function pick(rng, list) {
-  return list[Math.floor(rng() * list.length)];
-}
-
+// Pick a value in [min, max) from a rng function.
 export function range(rng, min, max) {
   return min + rng() * (max - min);
 }
 
-export function rangeInt(rng, min, max) {
-  return min + Math.floor(rng() * (max - min + 1));
-}
-
-export function chance(rng, p) {
-  return rng() < p;
+// Pick one item from an array with a rng function.
+export function pick(rng, items) {
+  return items[Math.floor(rng() * items.length)];
 }

@@ -1,195 +1,149 @@
-// The HUD for Solmar Bay: wanted stars, cash and health, the mission
-// objective, the speedometer, the minimap, the compass strip and the menus.
-// All DOM lives in index.html; this module only reads and writes it.
+// The HUD: wanted stars, compass, cash, health, objective banner, toasts, menus
+// and the minimap. The minimap sits vertically centred on the left edge — never
+// bottom-anchored, which a headless compositor renders as a dark hole.
+import { BEACH_X, GARAGE, LIGHTHOUSE, MARINA, PLAZA, WORLD } from './config.js';
 
-import { currentObjective } from './missions.js';
-
-const MAP_W = 180;
-const MAP_H = 180;
-
-export function buildHud(G) {
+export function createHud(G) {
   const $ = (id) => document.getElementById(id);
-  G.ui = {
-    stars: $('stars'),
-    cash: $('cash'),
-    healthFill: $('health-fill'),
-    healthText: $('health-text'),
-    objective: $('objective'),
-    speed: $('speed'),
-    minimap: $('minimap'),
-    compassStrip: $('compass-strip'),
-    compassBeacon: $('compass-beacon'),
-    messages: $('messages'),
-    menu: $('menu'),
-    pauseMenu: $('pause-menu'),
-    bustedScreen: $('busted-screen'),
-    bustedFine: $('busted-fine'),
-    garageMenu: $('garage-menu'),
-    prompt: $('prompt'),
-    status: $('status'),
+  const hud = {
+    starsEl: $('stars'),
+    compassEl: $('compass'),
+    cashEl: $('cash'),
+    hpEl: $('hpbar'),
+    speedEl: $('speed'),
+    objectiveEl: $('objective'),
+    bannerEl: $('banner'),
+    bannerTitle: $('banner-title'),
+    bannerSub: $('banner-sub'),
+    toastEl: $('toast'),
+    menuEl: $('menu'),
+    pauseEl: $('pause'),
+    garageEl: $('garage'),
+    bustedEl: $('busted'),
+    bustedText: $('busted-text'),
+    map: $('minimap').getContext('2d'),
+    bannerTimer: 0,
+    toastTimer: 0,
+    banner(title, sub = '') {
+      hud.bannerTitle.textContent = title;
+      hud.bannerSub.textContent = sub;
+      hud.bannerEl.classList.add('show');
+      hud.bannerTimer = 3.2;
+    },
+    objective(text) {
+      hud.objectiveEl.textContent = text;
+      G.objectiveBase = text;
+    },
+    flash(text) {
+      hud.toastEl.textContent = text;
+      hud.toastEl.classList.add('show');
+      hud.toastTimer = 2.6;
+    },
+    showBusted(fine) {
+      hud.bustedText.textContent = `Busted! The PD fined you $${fine}.`;
+      hud.bustedEl.classList.add('show');
+      setTimeout(() => hud.bustedEl.classList.remove('show'), 3200);
+    },
+    showMenu(show) {
+      hud.menuEl.classList.toggle('show', show);
+    },
+    showPause(show) {
+      hud.pauseEl.classList.toggle('show', show);
+    },
+    showGarage(show) {
+      hud.garageEl.classList.toggle('show', show);
+    },
   };
-  $('start-btn').addEventListener('click', () => G.ui.onStart && G.ui.onStart(false));
-  $('continue-btn').addEventListener('click', () => G.ui.onStart && G.ui.onStart(true));
-  $('resume-btn').addEventListener('click', () => G.ui.onResume && G.ui.onResume());
-  $('respawn-btn').addEventListener('click', () => G.ui.onRespawn && G.ui.onRespawn());
-  $('garage-close').addEventListener('click', () => G.ui.onGarageClose && G.ui.onGarageClose());
-  $('garage-repair').addEventListener('click', () => G.ui.onGarageBuy && G.ui.onGarageBuy('repair'));
-  $('garage-engine').addEventListener('click', () => G.ui.onGarageBuy && G.ui.onGarageBuy('engine'));
-  $('garage-armor').addEventListener('click', () => G.ui.onGarageBuy && G.ui.onGarageBuy('armor'));
+  return hud;
 }
 
-export function showScreen(G, name) {
-  const ui = G.ui;
-  ui.menu.style.display = name === 'menu' ? 'flex' : 'none';
-  ui.pauseMenu.style.display = name === 'pause' ? 'flex' : 'none';
-  ui.bustedScreen.style.display = name === 'busted' ? 'flex' : 'none';
-  ui.garageMenu.style.display = name === 'garage' ? 'flex' : 'none';
-  if (name === 'busted' && ui.bustedFine) {
-    ui.bustedFine.textContent = `The Solmar PD took $${G.bustedFine || 0} off you.`;
-  }
-  if (name === 'garage') refreshGarage(G);
+const COMPASS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+
+// One frame of HUD updates: stars, compass, cash, health, speed, timers, minimap.
+export function updateHud(G, dt) {
+  const H = G.hud;
+  const P = G.player;
+  H.bannerTimer = Math.max(0, H.bannerTimer - dt);
+  if (H.bannerTimer === 0) H.bannerEl.classList.remove('show');
+  H.toastTimer = Math.max(0, H.toastTimer - dt);
+  if (H.toastTimer === 0) H.toastEl.classList.remove('show');
+
+  let stars = '';
+  for (let i = 0; i < 5; i++) stars += i < P.wanted ? '★' : '☆';
+  H.starsEl.textContent = stars;
+  const heading = P.vehicle ? P.vehicle.heading : P.heading;
+  const idx = Math.round(((heading % (Math.PI * 2)) + Math.PI * 2) / (Math.PI / 4)) % 8;
+  H.compassEl.textContent = `N NE E SE S SW W NW · ${COMPASS[idx]}`;
+  H.cashEl.textContent = `$${P.cash}`;
+  H.hpEl.style.width = `${Math.max(0, Math.min(100, P.hp))}%`;
+  const speed = P.vehicle ? Math.abs(P.vehicle.speed) * 3.6 : 0;
+  H.speedEl.textContent = P.vehicle ? `${Math.round(speed)} km/h` : '';
+  drawMinimap(G);
 }
 
-function refreshGarage(G) {
-  const set = (id, text) => {
-    const el = document.getElementById(id);
-    if (el) el.textContent = text;
-  };
-  const v = G.player.vehicle;
-  set('garage-cash', `Cash: $${Math.floor(G.player.cash)}`);
-  set('garage-damage', v ? `Damage: ${Math.floor(v.damage)}%` : 'No vehicle');
-  set('garage-repair', v && v.damage > 0 ? `Repair ($50)` : 'Repair — not needed');
-  set('garage-engine', G.upgrades.engine ? 'Engine upgrade — owned' : 'Engine upgrade ($400)');
-  set('garage-armor', G.upgrades.armor ? 'Armor — owned' : 'Armor ($300)');
-}
-
+// The minimap: roads, sea, beach, player arrow, police dots, beacon and garage.
 function drawMinimap(G) {
-  const canvas = G.ui.minimap;
-  if (!canvas) return;
-  const ctx = canvas.getContext('2d');
-  const sx = (x) => (x + 220) * 0.4;
-  const sz = (z) => (z + 180) * 0.4 + 18;
-  ctx.fillStyle = '#2e7f9e';
-  ctx.fillRect(0, 0, MAP_W, MAP_H);
-  ctx.fillStyle = '#9db380';
-  ctx.fillRect(sx(-220), sz(-180), 440 * 0.4, 360 * 0.4);
-  ctx.fillStyle = '#1d5a74';
-  ctx.fillRect(sx(30), sz(90), 60 * 0.4, 90 * 0.4);
-  ctx.fillStyle = '#3a3a40';
-  const roadsX = [-200, -160, -120, -80, -40, 0, 40, 80, 120, 160, 200];
-  const roadsZ = [-160, -120, -80, -40, 0, 40, 80, 120, 160];
-  for (const x of roadsX) ctx.fillRect(sx(x) - 2, sz(-180), 4, 360 * 0.4);
-  for (const z of roadsZ) ctx.fillRect(sx(-220), sz(z) - 2, 440 * 0.4, 4);
-  // Airfield.
-  ctx.fillStyle = '#2a2a30';
-  ctx.fillRect(sx(125), sz(-162), 80 * 0.4, 14 * 0.4);
-  // Collectibles.
-  ctx.fillStyle = '#ffd21f';
-  for (const c of G.city.caches) {
-    if (!c.taken) {
-      ctx.beginPath();
-      ctx.arc(sx(c.x), sz(c.z), 3, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
-  // Objective beacon.
-  const obj = currentObjective(G);
-  if (obj && obj.x !== null) {
-    ctx.fillStyle = '#ffd21f';
+  const ctx = G.hud.map;
+  const S = 160;
+  const scale = S / WORLD;
+  const toMap = (x, z) => [(x + WORLD / 2) * scale, (z + WORLD / 2) * scale];
+  ctx.fillStyle = '#7fae56';
+  ctx.fillRect(0, 0, S, S);
+  // Sea and beach on the east edge.
+  const [bx] = toMap(BEACH_X, 0);
+  ctx.fillStyle = '#e8d8a8';
+  ctx.fillRect(bx, 0, S - bx, S);
+  const [sx] = toMap(190, 0);
+  ctx.fillStyle = '#2e7fa8';
+  ctx.fillRect(sx, 0, S - sx, S);
+  // Roads.
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 2;
+  for (let c = -180; c <= 180; c += 60) {
+    const [x] = toMap(c, 0);
+    const [, z] = toMap(0, c);
     ctx.beginPath();
-    ctx.arc(sx(obj.x), sz(obj.z), 5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = '#fff';
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, S);
+    ctx.moveTo(0, z);
+    ctx.lineTo(S, z);
     ctx.stroke();
   }
-  // Traffic and parked cars.
-  ctx.fillStyle = '#f2f2f2';
-  for (const v of G.vehicles) {
-    if (v.driver === 'player') continue;
-    ctx.fillRect(sx(v.pos.x) - 1.5, sz(v.pos.z) - 1.5, 3, 3);
-  }
-  // Police.
-  ctx.fillStyle = '#2a6ad4';
-  for (const v of G.police) {
+  // Landmarks: garage (blue), lighthouse (white), marina (cyan), plaza (yellow).
+  function dot(x, z, color, r = 3) {
+    const [mx, mz] = toMap(x, z);
+    ctx.fillStyle = color;
     ctx.beginPath();
-    ctx.arc(sx(v.pos.x), sz(v.pos.z), 3, 0, Math.PI * 2);
+    ctx.arc(mx, mz, r, 0, Math.PI * 2);
     ctx.fill();
   }
-  // Player arrow.
-  const px = sx(G.player.pos.x);
-  const pz = sz(G.player.pos.z);
+  dot(GARAGE.pos[0], GARAGE.pos[1], '#3a6ad8', 3);
+  dot(LIGHTHOUSE[0], LIGHTHOUSE[1], '#ffffff', 3);
+  dot(MARINA[0], MARINA[1], '#2ec8d8', 3);
+  dot(PLAZA[0], PLAZA[1], '#ffd21f', 3);
+  // Mission beacon.
+  if (G.beacon) {
+    const [mx, mz] = toMap(G.beacon.x, G.beacon.z);
+    ctx.strokeStyle = '#ffd21f';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(mx, mz, 7, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  // Police cars.
+  for (const car of G.police.cars) dot(car.x, car.z, '#ff2222', 2.5);
+  // The player: a white arrow pointing where they face.
+  const [px, pz] = toMap(G.player.x, G.player.z);
+  const heading = G.player.vehicle ? G.player.vehicle.heading : G.player.heading;
+  ctx.fillStyle = '#ffffff';
   ctx.save();
   ctx.translate(px, pz);
-  ctx.rotate(-G.player.angle);
-  ctx.fillStyle = '#ff5a3a';
+  ctx.rotate(-heading);
   ctx.beginPath();
   ctx.moveTo(0, -6);
-  ctx.lineTo(4, 5);
-  ctx.lineTo(-4, 5);
+  ctx.lineTo(4.5, 5);
+  ctx.lineTo(-4.5, 5);
   ctx.closePath();
   ctx.fill();
   ctx.restore();
-}
-
-function updateCompass(G) {
-  const strip = G.ui.compassStrip;
-  if (!strip) return;
-  const heading = G.cameraYaw;
-  const pxPerRad = 114.6;
-  const offset = -((heading * pxPerRad) % (Math.PI * 2 * pxPerRad));
-  strip.style.transform = `translateX(${offset - 360}px)`;
-  const obj = currentObjective(G);
-  const beacon = G.ui.compassBeacon;
-  if (beacon) {
-    if (obj && obj.x !== null) {
-      const dx = obj.x - G.player.pos.x;
-      const dz = obj.z - G.player.pos.z;
-      const bearing = Math.atan2(-dx, -dz);
-      let diff = bearing - heading;
-      while (diff > Math.PI) diff -= Math.PI * 2;
-      while (diff < -Math.PI) diff += Math.PI * 2;
-      const x = 360 + diff * pxPerRad;
-      beacon.style.display = 'block';
-      beacon.style.left = `${Math.max(0, Math.min(720, x))}px`;
-    } else {
-      beacon.style.display = 'none';
-    }
-  }
-}
-
-export function updateHud(G) {
-  const ui = G.ui;
-  if (!ui) return;
-  ui.stars.textContent = '★'.repeat(G.wanted) + '☆'.repeat(5 - G.wanted);
-  ui.cash.textContent = `$${Math.floor(G.player.cash)}`;
-  const hp = Math.max(0, Math.round(G.player.health));
-  ui.healthFill.style.width = `${hp}%`;
-  ui.healthText.textContent = `${hp}`;
-  const obj = currentObjective(G);
-  let objText = obj ? obj.text : '';
-  if (G.mission && G.mission.timer > 0) objText += ` — ${Math.ceil(G.mission.timer)}s`;
-  ui.objective.textContent = objText;
-  const speed = G.player.vehicle ? Math.abs(G.player.vehicle.speed) * 3.6 : 0;
-  ui.speed.textContent = G.player.vehicle ? `${Math.round(speed)} km/h` : '';
-  // Messages.
-  const now = G.elapsed;
-  const active = G.messages.filter((m) => m.until > now);
-  G.messages = active;
-  ui.messages.innerHTML = active.map((m) => `<div class="toast">${m.text}</div>`).join('');
-  // Prompt line.
-  let prompt = '';
-  if (G.mode === 'play') {
-    if (!G.player.vehicle) {
-      if (G.nearVehicle) prompt = `Press E to drive the ${G.nearVehicle.spec.name}`;
-      else if (G.nearGarage) prompt = 'Press E to open the garage';
-      else prompt = 'WASD to move · Click to shoot · E to drive';
-    } else if (G.nearGarage) {
-      prompt = 'Press E for the garage · E again to leave the vehicle · P pause';
-    } else {
-      prompt = 'E to leave the vehicle · P pause';
-    }
-  }
-  ui.prompt.textContent = prompt;
-  drawMinimap(G);
-  updateCompass(G);
 }

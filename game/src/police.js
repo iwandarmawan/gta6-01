@@ -1,144 +1,139 @@
-// The wanted system for Solmar Bay: stars 0 to 5, earned by crime, lost by
-// laying low. Police cars chase and ram the player; at four stars a
-// helicopter circles overhead with a spotlight. Getting busted costs cash.
-
-const THREE = window.THREE;
+// The Solmar PD: wanted stars, pursuing interceptors, a helicopter at four stars,
+// and the bust when the law catches the player.
 import { WORLD } from './config.js';
-import { makeRng, pick, range } from './rng.js';
-import { createVehicleMesh, spawnVehicle } from './cars.js';
-import { groundHeight, resolveCollision } from './city.js';
-import { playSiren } from './audio.js';
+import { clampVehicle, driveVehicle, makeVehicle } from './cars.js';
+import { mulberry32 } from './rng.js';
 
+export function createPolice(scene) {
+  return {
+    cars: [],
+    heli: null,
+    heliAngle: 0,
+    spawnTimer: 0,
+    bustTimer: 0,
+  };
+}
+
+// How many interceptors the stars call for.
+function wantedCars(wanted) {
+  return [0, 1, 2, 3, 4, 5][wanted] ?? 0;
+}
+
+// Raise the wanted level (capped at 5) and tell the HUD.
 export function addWanted(G, stars) {
-  G.wanted = Math.max(0, Math.min(5, G.wanted + stars));
-  G.wantedTimer = 0;
-  if (G.wanted > 0) playSiren(G.audio, true);
-}
-
-export function clearWanted(G) {
-  G.wanted = 0;
-  G.wantedTimer = 0;
-  playSiren(G.audio, false);
-}
-
-export function updateWanted(G, dt) {
-  if (G.wanted === 0) return;
-  G.wantedTimer += dt;
-  // Lay low for 25 seconds with no new crime and the heat cools by a star.
-  if (G.wantedTimer > 25) {
-    G.wanted -= 1;
-    G.wantedTimer = 0;
-    if (G.wanted === 0) playSiren(G.audio, false);
-  }
-}
-
-function spawnPoliceCar(G) {
-  const rng = makeRng((G.elapsed * 1000) | 0);
-  const edge = pick(rng, ['n', 's', 'e', 'w']);
-  let x;
-  let z;
-  if (edge === 'n') { x = range(rng, -180, 180); z = -170; }
-  else if (edge === 's') { x = range(rng, -180, 180); z = 170; }
-  else if (edge === 'e') { x = 210; z = range(rng, -160, 160); }
-  else { x = -210; z = range(rng, -160, 160); }
-  const v = spawnVehicle(G, 'police', x, z, 0, 0x1a2a4a);
-  v.police = true;
-  v.chaseSpeed = 0;
-  G.police.push(v);
-  return v;
+  G.player.wanted = Math.min(5, G.player.wanted + stars);
+  G.hud.flash(`Wanted level ${G.player.wanted} — the PD is coming`);
 }
 
 export function updatePolice(G, dt) {
-  const want = Math.min(G.wanted + 1, 5);
-  while (G.police.length < want && G.wanted > 0) spawnPoliceCar(G);
-  while (G.police.length > want) {
-    const v = G.police.pop();
-    G.scene.remove(v.mesh);
-    const i = G.vehicles.indexOf(v);
-    if (i >= 0) G.vehicles.splice(i, 1);
+  const P = G.player;
+  const pol = G.police;
+  const want = wantedCars(P.wanted);
+
+  // Spawn interceptors at the city edge until the stars are matched.
+  pol.spawnTimer -= dt;
+  if (pol.cars.length < want && pol.spawnTimer <= 0) {
+    pol.spawnTimer = 2.5;
+    const rng = mulberry32((Date.now() % 100000) + pol.cars.length * 977);
+    const edge = Math.floor(rng() * 4);
+    const a = (rng() * 2 - 1) * 170;
+    const [x, z] = edge === 0 ? [a, -180] : edge === 1 ? [a, 180] : edge === 2 ? [-180, a] : [180, a];
+    const car = makeVehicle('police', x, z, 0);
+    car.driver = 'police';
+    G.scene.add(car.group);
+    pol.cars.push(car);
   }
-  const target = G.player.vehicle ? G.player.vehicle.pos : G.player.pos;
-  for (const v of G.police) {
-    const dx = target.x - v.pos.x;
-    const dz = target.z - v.pos.z;
-    const dist = Math.sqrt(dx * dx + dz * dz);
-    const wantAngle = Math.atan2(-dx, -dz);
-    let diff = wantAngle - v.angle;
+
+  // Chase: steer toward the player and ram.
+  for (const car of pol.cars) {
+    const dx = P.x - car.x;
+    const dz = P.z - car.z;
+    const dist = Math.hypot(dx, dz) || 1;
+    const wantHeading = Math.atan2(dx, dz);
+    let diff = wantHeading - car.heading;
     while (diff > Math.PI) diff -= Math.PI * 2;
     while (diff < -Math.PI) diff += Math.PI * 2;
-    v.angle += Math.max(-2.4 * dt, Math.min(2.4 * dt, diff));
-    const chaseTop = Math.min(33, 20 + G.wanted * 2.5);
-    v.chaseSpeed = Math.min(chaseTop, v.chaseSpeed + 12 * dt);
-    const fx = -Math.sin(v.angle);
-    const fz = -Math.cos(v.angle);
-    v.pos.x += fx * v.chaseSpeed * dt;
-    v.pos.z += fz * v.chaseSpeed * dt;
-    resolveCollision(G, v.pos, 2.2);
-    v.pos.y = groundHeight(v.pos.x, v.pos.z);
-    v.mesh.position.copy(v.pos);
-    v.mesh.rotation.y = v.angle;
-    const lights = v.mesh.userData.policeLights;
-    if (lights) {
-      const phase = Math.floor(G.elapsed * 6) % 2 === 0;
-      lights[0].material.emissiveIntensity = phase ? 2 : 0.2;
-      lights[1].material.emissiveIntensity = phase ? 0.2 : 2;
+    const steer = Math.max(-1, Math.min(1, diff * 1.5));
+    const throttle = dist > 6 ? 1 : 0.4;
+    driveVehicle(car, -steer, throttle, dt, 1.05);
+    clampVehicle(car, WORLD);
+    // Ram: shove the player's vehicle and hurt the player a little.
+    if (dist < 4 && P.vehicle) {
+      P.vehicle.speed *= 0.96;
+      P.hp -= 2 * dt;
     }
-    // Ram the player: damage on contact, and a slow arrest when on foot.
-    if (dist < 3.2) {
-      if (G.player.vehicle) {
-        G.player.vehicle.damage = Math.min(100, (G.player.vehicle.damage || 0) + 12 * dt);
-        v.chaseSpeed *= 0.6;
-      } else {
-        G.player.health -= 14 * dt;
-        if (G.player.health <= 0) bustPlayer(G);
-      }
-    }
-  }
-  // Helicopter at four stars and up.
-  if (G.wanted >= 4 && !G.heli) {
-    const heli = new THREE.Group();
-    const body = new THREE.Mesh(new THREE.BoxGeometry(3, 1.6, 6), new THREE.MeshLambertMaterial({ color: 0x1a2a4a }));
-    heli.add(body);
-    const rotor = new THREE.Mesh(new THREE.BoxGeometry(9, 0.15, 0.8), new THREE.MeshLambertMaterial({ color: 0x222222 }));
-    rotor.position.y = 1.2;
-    heli.add(rotor);
-    heli.userData.rotor = rotor;
-    const spot = new THREE.Mesh(new THREE.ConeGeometry(4, 18, 12, 1, true), new THREE.MeshBasicMaterial({ color: 0xfff2c0, transparent: true, opacity: 0.18, side: THREE.DoubleSide, depthWrite: false }));
-    spot.position.y = -9;
-    spot.rotation.x = Math.PI;
-    heli.add(spot);
-    G.scene.add(heli);
-    G.heli = heli;
-  }
-  if (G.heli) {
-    if (G.wanted < 4) {
-      G.scene.remove(G.heli);
-      G.heli = null;
+    // On foot, a close interceptor starts the bust clock.
+    if (dist < 3.5 && !P.vehicle) {
+      pol.bustTimer += dt;
+      if (pol.bustTimer > 1.5) bustPlayer(G);
     } else {
-      const a = G.elapsed * 0.5;
-      G.heli.position.set(
-        target.x + Math.cos(a) * 26,
-        34,
-        target.z + Math.sin(a) * 26,
+      pol.bustTimer = Math.max(0, pol.bustTimer - dt);
+    }
+  }
+
+  // Wanted decays when no interceptor is close.
+  const nearest = pol.cars.reduce((m, c) => Math.min(m, Math.hypot(P.x - c.x, P.z - c.z)), 999);
+  if (P.wanted > 0 && nearest > 60) {
+    G.wantedDecay = (G.wantedDecay || 0) + dt;
+    if (G.wantedDecay > 25) {
+      P.wanted -= 1;
+      G.wantedDecay = 0;
+      G.hud.flash(`Wanted level ${P.wanted}`);
+    }
+  } else {
+    G.wantedDecay = 0;
+  }
+
+  // The helicopter circles above the player at four stars and up.
+  if (P.wanted >= 4 && !pol.heli) {
+    const heli = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.BoxGeometry(3, 1.4, 6), new THREE.MeshLambertMaterial({ color: 0x1a2a44 }));
+    const rotor = new THREE.Mesh(new THREE.BoxGeometry(9, 0.15, 0.6), new THREE.MeshLambertMaterial({ color: 0x222222 }));
+    rotor.position.y = 1;
+    const beam = new THREE.Mesh(
+      new THREE.ConeGeometry(4, 18, 12, 1, true),
+      new THREE.MeshLambertMaterial({ color: 0xfff2a0, transparent: true, opacity: 0.18 }),
+    );
+    beam.position.y = -9;
+    heli.add(body, rotor, beam);
+    heli.userData.rotor = rotor;
+    G.scene.add(heli);
+    pol.heli = heli;
+  }
+  if (pol.heli) {
+    if (P.wanted < 4) {
+      G.scene.remove(pol.heli);
+      pol.heli = null;
+    } else {
+      pol.heliAngle += dt * 0.5;
+      pol.heli.position.set(
+        P.x + Math.cos(pol.heliAngle) * 22,
+        42,
+        P.z + Math.sin(pol.heliAngle) * 22,
       );
-      G.heli.rotation.y = -a;
-      G.heli.userData.rotor.rotation.y += dt * 22;
+      pol.heli.rotation.y = -pol.heliAngle;
+      pol.heli.userData.rotor.rotation.y += dt * 18;
     }
   }
 }
 
+// Busted: fine, wanted cleared, player dropped back at the plaza on foot.
 export function bustPlayer(G) {
-  G.player.health = 100;
-  const fine = Math.min(200, Math.floor(G.player.cash * 0.2));
-  G.player.cash -= fine;
-  clearWanted(G);
-  G.mode = 'busted';
-  G.bustedFine = fine;
-  if (G.player.vehicle) {
-    G.player.vehicle.driver = null;
-    G.player.vehicle = null;
-    G.player.onFoot = true;
+  const P = G.player;
+  const fine = Math.min(P.cash, 100);
+  P.cash -= fine;
+  P.wanted = 0;
+  P.hp = 100;
+  if (P.vehicle) {
+    P.vehicle.driver = null;
+    P.vehicle = null;
   }
-  G.player.pos.set(-8, 0, -8);
-  G.player.angle = Math.PI * 0.75;
+  P.x = 10;
+  P.z = 10;
+  P.heading = 0;
+  G.police.bustTimer = 0;
+  for (const car of G.police.cars) G.scene.remove(car.group);
+  G.police.cars = [];
+  G.hud.showBusted(fine);
+  G.audio.blip(220, 0.4, 'square', 0.12);
 }

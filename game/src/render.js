@@ -1,58 +1,42 @@
-// Rendering for Solmar Bay: the WebGL renderer and the third-person follow
-// camera. The camera trails the player or their vehicle, eases toward the
-// heading, and lets the mouse drag orbit it.
+// Rendering: the WebGL renderer, sun-soaked lighting, sky and fog, and the
+// third-person chase camera that follows the player on foot and in a vehicle.
+export function createRenderer() {
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  document.getElementById('game').appendChild(renderer.domElement);
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x9fd4ef);
+  scene.fog = new THREE.Fog(0x9fd4ef, 180, 520);
+  const camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.1, 900);
 
-const THREE = window.THREE;
+  // A high summer sun and a soft sky fill: the city reads sun-soaked, not flat.
+  const sun = new THREE.DirectionalLight(0xfff2d8, 2.4);
+  sun.position.set(120, 180, 60);
+  scene.add(sun);
+  scene.add(new THREE.HemisphereLight(0xbfe3ff, 0x8a9a6a, 1.1));
 
-export function createRenderer(G) {
-  const canvas = document.getElementById('game');
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  G.renderer = renderer;
-  G.camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 1200);
-  window.addEventListener('resize', () => {
-    G.camera.aspect = window.innerWidth / window.innerHeight;
-    G.camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
+  addEventListener('resize', () => {
+    camera.aspect = innerWidth / innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
   });
+  return { renderer, scene, camera };
 }
 
+// Chase camera: behind and above the player, eased toward its target so turns
+// feel smooth instead of snappy. In shot mode the camera is fixed by shots.js.
 export function updateCamera(G, dt) {
-  if (G.cameraOverride) {
-    if (G.cameraOverride.follow) {
-      // A staged shot: the camera tracks the player from a fixed side
-      // offset, so the action never drives out of frame.
-      const target = G.player.vehicle ? G.player.vehicle.pos : G.player.pos;
-      const o = G.cameraOverride;
-      G.camera.position.set(target.x + o.dx, target.y + o.height, target.z + o.dz);
-      G.camera.lookAt(target.x + o.lookX, target.y + 1.5, target.z + o.lookZ);
-      return;
-    }
-    G.camera.position.copy(G.cameraOverride.pos);
-    G.camera.lookAt(G.cameraOverride.look);
-    return;
-  }
-  const input = G.input;
-  G.orbitX = (G.orbitX || 0) + (input.lookDX || 0) * 0.004;
-  G.orbitY = Math.max(-0.1, Math.min(0.7, (G.orbitY || 0.25) + (input.lookDY || 0) * 0.003));
-  const target = G.player.vehicle ? G.player.vehicle.pos : G.player.pos;
-  const heading = G.player.vehicle ? G.player.vehicle.angle : G.player.angle;
-  // The camera eases toward the heading so turns feel smooth, not snappy.
-  let targetYaw = heading + G.orbitX;
-  let diff = targetYaw - G.cameraYaw;
-  while (diff > Math.PI) diff -= Math.PI * 2;
-  while (diff < -Math.PI) diff += Math.PI * 2;
-  G.cameraYaw += diff * Math.min(1, dt * (G.player.vehicle ? 3.5 : 6));
-  const dist = G.player.vehicle ? 10.5 : 7.5;
-  const height = G.player.vehicle ? 4.2 : 3.4;
-  const fx = -Math.sin(G.cameraYaw);
-  const fz = -Math.cos(G.cameraYaw);
-  const camPos = {
-    x: target.x - fx * dist,
-    y: target.y + height + Math.sin(G.orbitY) * 4,
-    z: target.z - fz * dist,
-  };
-  G.camera.position.set(camPos.x, camPos.y, camPos.z);
-  G.camera.lookAt(target.x + fx * 5, target.y + 1.6, target.z + fz * 5);
+  if (G.shotCam) return;
+  const P = G.player;
+  const heading = P.vehicle ? P.vehicle.heading : P.heading;
+  const dist = P.vehicle ? 11 : 7.5;
+  const height = P.vehicle ? 4.2 : 3.4;
+  const tx = P.x - Math.sin(heading) * dist;
+  const tz = P.z - Math.cos(heading) * dist;
+  const k = 1 - Math.pow(0.001, dt);
+  G.camera.position.x += (tx - G.camera.position.x) * k;
+  G.camera.position.y += (height - G.camera.position.y) * k;
+  G.camera.position.z += (tz - G.camera.position.z) * k;
+  G.camera.lookAt(P.x + Math.sin(heading) * 4, 1.6, P.z + Math.cos(heading) * 4);
 }

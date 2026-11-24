@@ -1,72 +1,62 @@
-// Pedestrians for Solmar Bay: people walking the sidewalks between random
-// points, who scatter when a gun goes off or a car bears down on them.
+// Pedestrians: small figures strolling the sidewalks, turning at intersections.
+import { ROAD_EVERY, WORLD } from './config.js';
+import { mulberry32, range, pick } from './rng.js';
 
-const THREE = window.THREE;
-import { makeRng, pick, range } from './rng.js';
-import { randomSidewalkPoint, resolveCollision } from './city.js';
+const SHIRTS = [0xe8e8e8, 0x3a6ad8, 0xe8b13a, 0x8a3ad8, 0x3ad86a, 0xd83a5a];
 
-const SHIRTS = [0xd43a2a, 0x2a6ad4, 0x2e8f5a, 0xe8b48c, 0x9a6ad4, 0xf2e3c6, 0x3a3a40];
-
-export function spawnPeds(G) {
-  const rng = makeRng(987);
-  G.peds = [];
-  for (let i = 0; i < 24; i++) {
-    const p = randomSidewalkPoint(G, rng);
+export function createPeds(scene, count = 18) {
+  const rng = mulberry32(4242);
+  const peds = [];
+  for (let i = 0; i < count; i++) {
     const group = new THREE.Group();
-    const shirt = new THREE.MeshLambertMaterial({ color: pick(rng, SHIRTS) });
-    const skin = new THREE.MeshLambertMaterial({ color: pick(rng, [0xe8b48c, 0xc98a5a, 0x8a5a3a, 0xf2d0b0]) });
-    const legs = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.8, 0.35), new THREE.MeshLambertMaterial({ color: 0x2a3542 }));
-    legs.position.y = 0.4;
-    group.add(legs);
-    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.65, 0.8, 0.4), shirt);
-    torso.position.y = 1.2;
-    group.add(torso);
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.28, 10, 8), skin);
-    head.position.y = 1.85;
-    group.add(head);
-    group.position.set(p.x, 0, p.z);
-    G.scene.add(group);
-    const dest = randomSidewalkPoint(G, rng);
-    G.peds.push({
-      mesh: group,
-      pos: group.position,
-      dest,
+    const shirt = new THREE.Mesh(
+      new THREE.BoxGeometry(0.7, 0.9, 0.4),
+      new THREE.MeshLambertMaterial({ color: pick(rng, SHIRTS) }),
+    );
+    shirt.position.y = 1.05;
+    const head = new THREE.Mesh(
+      new THREE.BoxGeometry(0.45, 0.45, 0.45),
+      new THREE.MeshLambertMaterial({ color: 0xe8b88a }),
+    );
+    head.position.y = 1.75;
+    const legs = new THREE.Mesh(
+      new THREE.BoxGeometry(0.6, 0.6, 0.35),
+      new THREE.MeshLambertMaterial({ color: 0x2a2a34 }),
+    );
+    legs.position.y = 0.3;
+    group.add(shirt, head, legs);
+    const x = Math.floor(range(rng, -3, 3)) * ROAD_EVERY + (rng() < 0.5 ? -8 : 8);
+    const z = range(rng, -170, 170);
+    group.position.set(x, 0, z);
+    scene.add(group);
+    peds.push({
+      group,
+      x,
+      z,
+      heading: pick(rng, [0, Math.PI / 2, Math.PI, -Math.PI / 2]),
       speed: range(rng, 1.2, 2.2),
-      scared: 0,
-      angle: rng() * Math.PI * 2,
+      alive: true,
+      alongRoad: rng() < 0.5,
     });
   }
+  return peds;
 }
 
-export function scarePeds(G, x, z, radius) {
-  for (const ped of G.peds) {
-    const dx = ped.pos.x - x;
-    const dz = ped.pos.z - z;
-    const d = Math.sqrt(dx * dx + dz * dz);
-    if (d < radius) {
-      ped.scared = 3;
-      ped.dest = { x: ped.pos.x + (dx / (d || 1)) * 20, z: ped.pos.z + (dz / (d || 1)) * 20 };
+export function updatePeds(peds, dt) {
+  const lim = WORLD / 2 - 8;
+  for (const p of peds) {
+    if (!p.alive) continue;
+    p.x += Math.sin(p.heading) * p.speed * dt;
+    p.z += Math.cos(p.heading) * p.speed * dt;
+    // Turn at intersections so they stay on the grid.
+    const nearX = Math.abs(p.x % ROAD_EVERY) < 4 || Math.abs((p.x % ROAD_EVERY) - ROAD_EVERY) < 4;
+    const nearZ = Math.abs(p.z % ROAD_EVERY) < 4 || Math.abs((p.z % ROAD_EVERY) - ROAD_EVERY) < 4;
+    if ((nearX || nearZ) && Math.random() < dt * 0.25) {
+      p.heading = Math.floor(Math.random() * 4) * Math.PI / 2;
     }
-  }
-}
-
-export function updatePeds(G, dt) {
-  const rng = G.rng;
-  for (const ped of G.peds) {
-    const dx = ped.dest.x - ped.pos.x;
-    const dz = ped.dest.z - ped.pos.z;
-    const d = Math.sqrt(dx * dx + dz * dz);
-    if (d < 1.5) {
-      ped.dest = randomSidewalkPoint(G, rng);
-      continue;
-    }
-    const speed = ped.scared > 0 ? ped.speed * 2.4 : ped.speed;
-    ped.scared = Math.max(0, ped.scared - dt);
-    ped.pos.x += (dx / d) * speed * dt;
-    ped.pos.z += (dz / d) * speed * dt;
-    ped.angle = Math.atan2(-dx, -dz);
-    ped.mesh.rotation.y = ped.angle;
-    ped.mesh.position.y = Math.abs(Math.sin(G.elapsed * 6 + ped.pos.x)) * 0.08;
-    resolveCollision(G, ped.pos, 0.6);
+    if (p.x > lim || p.x < -lim || p.z > lim || p.z < -lim) p.heading += Math.PI;
+    p.group.position.set(p.x, 0, p.z);
+    p.group.rotation.y = p.heading;
+    p.group.position.y = Math.abs(Math.sin(performance.now() / 300 + p.x)) * 0.06;
   }
 }
