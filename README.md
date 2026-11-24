@@ -1,33 +1,21 @@
-# Solmar Bay — a night in the city
+# Solmar Bay — Dawn Patrol
 
 [![make.fun · gta6-01](https://make.fun/badge/gta6-01.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 [![rank](https://make.fun/badge/gta6-01/iwandarmawan/gta6-01/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 [![reward](https://make.fun/badge/gta6-01/iwandarmawan/gta6-01/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 
-An original open-world crime game in the spirit of GTA 6, built for the
-[make.fun gta6-01 bounty](https://make.fun/bounty/gta6-01). One night in
-Solmar Bay: Rico Marlowe owes Vera Costa one last night of work. Steal cars,
-run fares, dodge the Solmar Bay PD and their helicopter, and make the
-lighthouse cache before dawn.
+An original 3D open-world game built for the [gta6-01 bounty](https://make.fun/bounty/gta6-01) on make.fun: a golden-hour dawn city on the coast, rendered with vendored three.js and plain Node 22 — no network at runtime.
 
-## The game
+**The city:** Solmar Bay wakes up at sunrise. Low warm sun in the east, long shadows pointing west, morning fog lifting off the southern sea, lamps still glowing, headlights on, birds crossing the dawn sky. Palm Plaza, Rico's Garage, the marina, the airfield and the lighthouse point, all reachable on foot or by vehicle.
 
-- A night city to explore on foot and by car: neon signs, lit windows, street
-  lamps, a lighthouse beam, the moon over the northern sea
-- Traffic and pedestrians, cars to steal and drive (sedan, pickup, the
-  "Coast Runner" motorcycle, a skiff), a wanted system with police
-  interceptors and a helicopter with a spotlight at four stars
-- Six story missions plus repeatable taxi fares, a garage with repairs and
-  upgrades, combat, a HUD with a minimap, and a save
-- Runs offline from static files: serve `game/` and open `index.html`
+**The story:** Rico Marlowe and Vera Costa run six missions — First Wheels ($150), Harbour Escape ($300), City Taxi ($250, 90s), Sunset Courier ($400, 120s, 3 drops), Rooftop Leap ($350) and Lighthouse Cache ($500, 5 packages) — plus repeatable taxi fares. Earn cash, buy garage upgrades (repair $50, engine $400 for +25% speed, armor $300 for +50 HP), and dodge a 5-star wanted system with police interceptors and a helicopter spotlight at 4 stars and up.
+
+**The fleet:** sedan, pickup, the "Coast Runner" motorcycle (top speed 34), a skiff for the harbour, and police interceptors to steal if you dare. 18 pedestrians, ambient traffic, a save system, shooting, and a HUD with a live minimap.
 
 ## Play
 
-WASD move / drive · E enter or leave a car · Click shoot · Space handbrake ·
-G garage · T taxi fare (after the story)
+Open `game/index.html` in a desktop browser (offline, no server needed). WASD to drive or walk, E to enter/exit a vehicle or interact, F to shoot, Shift to run.
 
 ## Build
 
-`node main.ts` writes the game, screenshots and dossier to `/output`
-(`MAKEFUN_OUTPUT_DIR` outside the grader). Serve locally with
-`node serve.ts` and open http://localhost:8080.
+`node main.ts` writes the deterministic dossier to `/output` (or `$MAKEFUN_OUTPUT_DIR`).
