@@ -1,124 +1,127 @@
-// Staged screenshots: `?shot=chase|play|drive|mission&seed=1` puts the game into
-// a fixed, deterministic state and a fixed camera, then reports #status ready.
-// The game itself renders every pixel: nothing is faked or composited.
-import { AIRFIELD, LIGHTHOUSE, MARINA, PLAZA } from './config.js';
+// Staged screenshots: the game reads ?shot=<name>&seed=<n> from the URL
+// and places everything for one picture — the player, the cars, the
+// police, the mission and the camera — then plays on from there. The
+// pictures are real renders of the game's own code, never composited.
+// Four shots: chase (the cover), play, drive and mission.
 import { makeVehicle } from './cars.js';
-import { setBeacon } from './missions.js';
+import { startMission } from './missions.js';
 
-function placePlayer(G, x, z, heading) {
-  const P = G.player;
-  P.x = x;
-  P.z = z;
-  P.heading = heading;
-  P.mesh.position.set(x, 0, z);
-  P.mesh.rotation.y = heading;
-}
+// One staged scene: where the player is, what they drive, the wanted
+// level, the mission, and the camera pose that frames it.
+const SHOTS = {
+  chase: {
+    // A police chase up the beach: two interceptors behind the sedan, three
+    // stars, the lighthouse and its beacon dead ahead, the sea on the right
+    // and the seafront buildings on the left. The beach is the one stretch
+    // of coast with a clear sightline — the road itself is a canyon between
+    // the west blocks and the narrow east row at x = 152-158, so the chase
+    // runs on the sand, where a GTA chase belongs.
+    vehicle: { kind: 'sedan', x: 170, z: 10, heading: 0 },
+    wanted: 3, mission: 'harbour', missionStep: 1,
+    police: [
+      { x: 167, z: 28, heading: 0 },
+      { x: 173, z: 37, heading: 0 },
+    ],
+    traffic: { x: 178, z: -30, heading: 0 },
+    peds: [{ x: 164, z: -8 }, { x: 175, z: 18 }],
+    speed: 22,
+    camera: { x: 176, y: 8, z: 55, tx: 171, ty: 2, tz: -15 },
+  },
+  play: {
+    // On foot at Palm Plaza: Rico by the fountain, the beacon over the car
+    // to steal, the mission banner up, pedestrians crossing.
+    onFoot: { x: 60, z: 44, heading: Math.PI },
+    wanted: 0, mission: 'wheels', missionStep: 0,
+    targetCar: { kind: 'sedan', x: 60, z: 32, heading: Math.PI / 2 },
+    camera: { x: 60, y: 7, z: 58, tx: 60, ty: 2, tz: 30 },
+  },
+  drive: {
+    // Driving the pickup up the beach toward the lighthouse: the lighthouse
+    // and its beacon big ahead, the sea on the right, the seafront on the
+    // left, a fare on the clock. Same beach as the cover, a different
+    // stretch — the lighthouse is close here, not a distant needle. The
+    // camera stands clear of the cross street at z = -60, so no black
+    // road band crosses the bottom of the frame.
+    vehicle: { kind: 'pickup', x: 170, z: -100, heading: 0 },
+    wanted: 0, mission: 'taxi', missionStep: 0,
+    traffic: { x: 177, z: -125, heading: 0 },
+    speed: 20,
+    camera: { x: 172, y: 9, z: -68, tx: 169, ty: 2, tz: -115 },
+  },
+  mission: {
+    // The skiff at the marina: docks, beach and city behind, the lighthouse
+    // and its beacon ahead, two stars on the HUD.
+    vehicle: { kind: 'boat', x: 205, z: 70, heading: Math.PI },
+    wanted: 2, mission: 'harbour', missionStep: 1,
+    speed: 11,
+    camera: { x: 218, y: 5, z: 84, tx: 205, ty: 1, tz: 64 },
+  },
+};
 
-function giveVehicle(G, kind, x, z, heading, speed) {
-  const v = makeVehicle(kind, x, z, heading);
-  v.driver = 'player';
-  v.speed = speed;
-  G.scene.add(v.group);
-  G.player.vehicle = v;
-  G.player.x = x;
-  G.player.z = z;
-  G.player.heading = heading;
-  G.vehicles.push(v);
-  return v;
-}
-
-function addPolice(G, spots) {
-  for (const [x, z, heading] of spots) {
-    const car = makeVehicle('police', x, z, heading);
-    car.driver = 'police';
-    car.speed = 24;
-    G.scene.add(car.group);
-    G.police.cars.push(car);
+// Stage one shot, or return null when the URL names none.
+export function stageShot(G) {
+  const params = new URLSearchParams(window.location.search);
+  const name = params.get('shot');
+  if (!name || !SHOTS[name]) return null;
+  const shot = SHOTS[name];
+  G.shotMode = true;
+  G.shotPose = shot.camera;
+  // The mission the shot shows: jump the story straight to its step.
+  if (shot.mission) {
+    const idx = ['wheels', 'harbour', 'taxi', 'courier', 'leap', 'cache'].indexOf(shot.mission);
+    G.missions.index = idx;
+    startMission(G);
+    G.missions.step = shot.missionStep;
+    const step = G.missions.active.steps[G.missions.step];
+    G.hud.setObjective(step.text, G.missions.timer > 0 ? G.missions.timer : 0);
+    G.missions.beacon.position.set(step.target.x, 30, step.target.z);
+    G.missions.marker.position.set(step.target.x, 0.2, step.target.z);
   }
-}
-
-function addTrafficCar(G, kind, x, z, heading, speed) {
-  const v = makeVehicle(kind, x, z, heading);
-  v.driver = 'traffic';
-  v.speed = speed;
-  G.scene.add(v.group);
-  G.traffic.push(v);
-  return v;
-}
-
-function fixedCamera(G, x, y, z, tx, ty, tz) {
-  G.shotCam = true;
-  G.camera.position.set(x, y, z);
-  G.camera.lookAt(tx, ty, tz);
-}
-
-// Stage one named shot. Called once after the world is built.
-export function stageShot(G, name) {
-  const P = G.player;
-  G.mode = 'shot';
-  G.hud.showMenu(false);
-  if (name === 'chase') {
-    // Cover: a police chase on the coast road north of the marina, three stars,
-    // mission objective up, the lighthouse ahead.
-    P.wanted = 3;
-    P.cash = 0;
-    giveVehicle(G, 'sedan', 168, -60, Math.PI, 22);
-    addPolice(G, [[168, -38, Math.PI], [164, -28, Math.PI]]);
-    addTrafficCar(G, 'pickup', 172, -120, Math.PI, 10);
-    addTrafficCar(G, 'sedan', 160, -150, 0, 11);
-    G.mission = { def: { id: 'harbour', name: 'Harbour Escape', pay: 300, text: 'Reach the lighthouse point' }, index: 1, stage: 1, timer: 0 };
-    setBeacon(G, LIGHTHOUSE[0], LIGHTHOUSE[1]);
-    G.hud.objective('Reach the lighthouse point');
-    fixedCamera(G, 158, 9, -2, 168, 1.5, -60);
-  } else if (name === 'play') {
-    // On foot at Palm Plaza, the mission beacon over the target sedan.
-    P.wanted = 0;
-    P.cash = 0;
-    placePlayer(G, 60, 60, Math.PI);
-    const target = makeVehicle('sedan', 60, 32, 0);
-    G.scene.add(target.group);
-    G.vehicles.push(target);
-    G.mission = { def: { id: 'wheels', name: 'First Wheels', pay: 150, text: 'Steal a car (walk up and press E)' }, index: 0, stage: 0, timer: 0 };
-    setBeacon(G, 60, 32);
-    G.hud.objective('Steal a car (walk up and press E)');
-    G.hud.banner('First Wheels — $150', 'Steal a car (walk up and press E)');
-    fixedCamera(G, 60, 6.5, 84, 60, 1.2, 26);
-  } else if (name === 'drive') {
-    // Driving the pickup down the coast road on a taxi job, clear of the marina docks.
-    P.wanted = 0;
-    P.cash = 0;
-    giveVehicle(G, 'pickup', 165, -40, Math.PI, 20);
-    addTrafficCar(G, 'sedan', 170, -90, Math.PI, 11);
-    addTrafficCar(G, 'pickup', 158, -130, 0, 10);
-    G.mission = { def: { id: 'taxi', name: 'City Taxi', pay: 250, text: 'Pick up the fare at Palm Plaza' }, index: 2, stage: 0, timer: 90 };
-    setBeacon(G, PLAZA[0], PLAZA[1]);
-    G.hud.objective('Pick up the fare at Palm Plaza — 90s');
-    fixedCamera(G, 165, 6, -8, 165, 1.5, -70);
-  } else if (name === 'mission') {
-    // The harbour escape: the skiff out on the open water by the marina, two stars,
-    // shot from the sea side so the MARINA sign stays out of frame.
-    P.wanted = 2;
-    P.cash = 0;
-    giveVehicle(G, 'boat', 200, 95, Math.PI, 11);
-    G.mission = { def: { id: 'harbour', name: 'Harbour Escape', pay: 300, text: 'Reach the lighthouse point' }, index: 1, stage: 1, timer: 0 };
-    setBeacon(G, LIGHTHOUSE[0], LIGHTHOUSE[1]);
-    G.hud.objective('Reach the lighthouse point');
-    fixedCamera(G, 210, 5, 120, 196, 1.5, 65);
+  if (shot.vehicle) {
+    const v = makeVehicle(G.scene, shot.vehicle.kind, shot.vehicle.x, shot.vehicle.z, shot.vehicle.heading);
+    v.speed = shot.speed || 0;
+    G.vehicle = v;
+    G.player.inVehicle = true;
+    G.player.x = v.x; G.player.z = v.z; G.player.heading = v.heading; G.player.speed = v.speed;
   }
-  // Let a few frames render, then report ready for the screenshot.
-  let frames = 0;
-  const tick = () => {
-    frames++;
-    if (frames >= 4) {
-      document.getElementById('status').textContent = 'ready';
-      return;
+  if (shot.onFoot) {
+    G.player.x = shot.onFoot.x; G.player.z = shot.onFoot.z;
+    G.player.heading = shot.onFoot.heading;
+  }
+  if (shot.targetCar) {
+    makeVehicle(G.scene, shot.targetCar.kind, shot.targetCar.x, shot.targetCar.z, shot.targetCar.heading);
+  }
+  if (shot.traffic) {
+    const t = G.traffic[0];
+    t.x = shot.traffic.x; t.z = shot.traffic.z; t.heading = shot.traffic.heading;
+    t.mesh.position.set(t.x, 0, t.z);
+    t.mesh.rotation.y = t.heading;
+  }
+  if (shot.police) {
+    for (const p of shot.police) {
+      const car = makeVehicle(G.scene, 'police', p.x, p.z, p.heading);
+      car.speed = 20;
+      G.police.cars.push(car);
     }
-    requestAnimationFrame(tick);
-  };
-  requestAnimationFrame(tick);
+  }
+  // Pedestrians placed in the frame, so the shot reads as a lived-in city.
+  if (shot.peds) {
+    shot.peds.forEach((spot, i) => {
+      const ped = G.peds[i % G.peds.length];
+      ped.x = spot.x; ped.z = spot.z;
+      ped.mesh.position.set(spot.x, 0, spot.z);
+      ped.mesh.rotation.y = Math.PI;
+    });
+  }
+  G.wanted = shot.wanted;
+  G.hud.setWanted(G.wanted);
+  G.hud.setCash(G.cash);
+  // The shot is a frozen frame, so the HUD is set from the staged values,
+  // not from a loop that never runs in shot mode.
+  G.hud.setSpeed((shot.speed || 0) * 3.6);
+  G.hud.setCompass(((-G.player.heading * 180) / Math.PI % 360 + 360) % 360);
+  G.player.mesh.position.set(G.player.x, 0, G.player.z);
+  G.player.mesh.rotation.y = G.player.heading;
+  G.player.mesh.visible = !G.player.inVehicle;
   return name;
-}
-
-export function shotNames() {
-  return ['chase', 'play', 'drive', 'mission'];
 }

@@ -1,69 +1,52 @@
-// Pistol combat: a click fires a hitscan shot from the camera's centre.
-// Hitting a pedestrian knocks them down (and the law notices); hitting a police
-// car dents it and smokes it. A short tracer and a muzzle flash sell the shot.
-export function createCombat(scene) {
-  const tracerMat = new THREE.MeshBasicMaterial({ color: 0xffe08a });
-  const tracer = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.06, 1), tracerMat);
-  tracer.visible = false;
-  scene.add(tracer);
-  const flash = new THREE.PointLight(0xffe08a, 0, 12);
-  scene.add(flash);
-  return { tracer, flash, cooldown: 0 };
-}
+// Combat: a pistol, fired with the mouse, aimed at the centre of the
+// screen. A shot that lands on a pedestrian or a police car counts as a
+// crime; a shot that lands on nothing still makes a noise. The crosshair
+// is the HUD's business; this file only decides what a shot hits.
+import { WANTED } from './config.js';
 
-export function updateCombat(G, dt) {
-  const C = G.combat;
-  C.cooldown = Math.max(0, C.cooldown - dt);
-  C.tracer.visible = C.cooldown > 0.22;
-  C.flash.intensity = C.cooldown > 0.2 ? 6 : 0;
-}
+const THREE = window.THREE;
 
-export function shoot(G) {
-  const C = G.combat;
-  if (C.cooldown > 0 || G.mode !== 'play' || G.paused) return;
-  C.cooldown = 0.3;
-  G.audio.blip(160, 0.09, 'square', 0.16);
-
-  // The shot flies from the camera through the screen's centre.
-  const origin = G.camera.position.clone();
+// Fire one shot from the camera through the screen centre. peds and police
+// are the only things that can be hit; returns what was hit, if anything.
+export function fireShot(G, camera) {
+  const origin = camera.position.clone();
   const dir = new THREE.Vector3();
-  G.camera.getWorldDirection(dir);
-  const end = origin.clone().addScaledVector(dir, 60);
-  C.tracer.position.copy(origin).addScaledVector(dir, 30);
-  C.tracer.lookAt(end);
-  C.tracer.scale.set(1, 1, 60);
-  C.flash.position.copy(origin).addScaledVector(dir, 2);
+  camera.getWorldDirection(dir);
+  const ray = new THREE.Raycaster(origin, dir, 0.1, 120);
+  const targets = [];
+  for (const ped of G.peds) targets.push({ obj: ped.mesh, kind: 'ped', ref: ped });
+  for (const car of G.police.cars) targets.push({ obj: car.mesh, kind: 'police', ref: car });
+  for (const car of G.traffic) targets.push({ obj: car.mesh, kind: 'traffic', ref: car });
+  const hits = ray.intersectObjects(targets.map((t) => t.obj), true);
+  if (hits.length === 0) return null;
+  const hit = hits[0];
+  let node = hit.object;
+  while (node.parent && node.parent !== G.scene) node = node.parent;
+  const found = targets.find((t) => t.obj === node);
+  if (!found) return null;
+  return found;
+}
 
-  // Nearest living pedestrian or police car near the ray.
-  let best = null;
-  let bestDist = 60;
-  const toTarget = new THREE.Vector3();
-  function test(x, z, kind, ref) {
-    toTarget.set(x - origin.x, 0, z - origin.z);
-    const along = toTarget.x * dir.x + toTarget.z * dir.z;
-    if (along < 2 || along > bestDist) return;
-    const perp = Math.hypot(toTarget.x - dir.x * along, toTarget.z - dir.z * along);
-    if (perp < 2.5) {
-      bestDist = along;
-      best = { kind, ref };
-    }
+// What a hit does: a pedestrian falls and the law notices; a police car
+// takes the hit and the wanted level climbs; traffic just gets a dent.
+export function applyHit(G, found) {
+  if (!found) return 'miss';
+  if (found.kind === 'ped') {
+    found.ref.mesh.visible = false;
+    found.ref.down = true;
+    addWanted(G, WANTED.hitPed);
+    return 'ped';
   }
-  for (const p of G.peds) if (p.alive) test(p.x, p.z, 'ped', p);
-  for (const car of G.police.cars) test(car.x, car.z, 'police', car);
+  if (found.kind === 'police') {
+    addWanted(G, WANTED.shoot);
+    return 'police';
+  }
+  return 'traffic';
+}
 
-  if (best && best.kind === 'ped') {
-    best.ref.alive = false;
-    best.ref.group.rotation.x = -Math.PI / 2;
-    best.ref.group.position.y = 0.3;
-    G.player.wanted = Math.min(5, G.player.wanted + 1);
-    G.hud.flash('A witness called the PD');
-  } else if (best && best.kind === 'police') {
-    best.ref.hp -= 34;
-    best.ref.smoke = 1;
-    if (best.ref.hp <= 0) {
-      G.scene.remove(best.ref.group);
-      G.police.cars = G.police.cars.filter((c) => c !== best.ref);
-      G.player.wanted = Math.min(5, G.player.wanted + 1);
-    }
-  }
+// Raise the wanted level, capped at five stars.
+export function addWanted(G, stars) {
+  G.wanted = Math.min(5, G.wanted + stars);
+  G.lastCrimeAt = G.time;
+  G.hud.setWanted(G.wanted);
 }

@@ -1,50 +1,55 @@
-// Ambient traffic: cars that loop the road grid so the city feels alive.
-// Each car follows one straight road and wraps around at the edge.
-import { ROAD_EVERY, WORLD } from './config.js';
+// Traffic: cars that drive the city's road grid in loops, so the streets
+// are never empty. Each car follows a rectangle of roads at a steady speed,
+// turning at the corners; they never leave the road, and they never think.
+import { ROADS_X, ROADS_Z } from './config.js';
 import { makeVehicle, driveVehicle } from './cars.js';
-import { mulberry32, range } from './rng.js';
 
-export function createTraffic(scene, count = 14) {
-  const rng = mulberry32(777);
+const KINDS = ['sedan', 'sedan', 'pickup', 'sedan', 'pickup'];
+
+// A rectangular loop of roads: the car drives it clockwise, forever.
+function makeLoop(rng) {
+  const x1 = ROADS_X[Math.floor(rng() * 3)];
+  const x2 = ROADS_X[3 + Math.floor(rng() * 3)];
+  const z1 = ROADS_Z[Math.floor(rng() * 2)];
+  const z2 = ROADS_Z[3 + Math.floor(rng() * 2)];
+  return [
+    { x: x1, z: z1 }, { x: x2, z: z1 }, { x: x2, z: z2 }, { x: x1, z: z2 },
+  ];
+}
+
+export function makeTraffic(scene, rng, count = 14) {
   const cars = [];
-  const colors = ['sedan', 'pickup', 'sedan', 'pickup', 'sedan'];
   for (let i = 0; i < count; i++) {
-    const kind = colors[i % colors.length];
-    const along = Math.floor(range(rng, -3, 4)) * ROAD_EVERY;
-    const vertical = rng() < 0.5;
-    const start = range(rng, -180, 180);
-    const dir = rng() < 0.5 ? 1 : -1;
-    const lane = (rng() < 0.5 ? -2.5 : 2.5) * dir;
-    const v = makeVehicle(kind, vertical ? along + lane : start, vertical ? start : along + lane, vertical ? (dir > 0 ? 0 : Math.PI) : (dir > 0 ? Math.PI / 2 : -Math.PI / 2));
-    v.driver = 'traffic';
-    v.speed = range(rng, 8, 13);
-    v.vertical = vertical;
-    v.dir = dir;
-    v.lane = lane;
-    v.road = along;
-    scene.add(v.group);
-    cars.push(v);
+    const loop = makeLoop(rng);
+    const start = loop[Math.floor(rng() * 4)];
+    const kind = KINDS[Math.floor(rng() * KINDS.length)];
+    const car = makeVehicle(scene, kind, start.x, start.z, rng() * Math.PI * 2);
+    car.loop = loop;
+    car.target = (loop.indexOf(start) + 1) % 4;
+    car.cruise = 7 + rng() * 4;
+    cars.push(car);
   }
   return cars;
 }
 
+// Steer each traffic car toward its next loop corner; snap to the corner
+// and take the next one when it arrives.
 export function updateTraffic(cars, dt) {
-  const lim = WORLD / 2 - 6;
-  for (const v of cars) {
-    driveVehicle(v, 0, 0, dt);
-    // Hold the lane: straight-line driving, no steering.
-    if (v.vertical) {
-      v.x = v.road + v.lane;
-      v.z += v.dir * v.speed * dt;
-      if (v.z > lim) v.z = -lim;
-      if (v.z < -lim) v.z = lim;
-    } else {
-      v.z = v.road + v.lane;
-      v.x += v.dir * v.speed * dt;
-      if (v.x > lim) v.x = -lim;
-      if (v.x < -lim) v.x = lim;
+  for (const car of cars) {
+    const corner = car.loop[car.target];
+    const dx = corner.x - car.x, dz = corner.z - car.z;
+    const dist = Math.hypot(dx, dz);
+    if (dist < 2) {
+      car.target = (car.target + 1) % 4;
+      continue;
     }
-    v.group.position.set(v.x, 0, v.z);
-    v.group.rotation.y = v.heading;
+    const want = Math.atan2(-dx, -dz);
+    let diff = want - car.heading;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    car.heading += Math.max(-2.2 * dt, Math.min(2.2 * dt, diff));
+    car.speed = car.cruise;
+    driveVehicle(car, 1, 0, false, dt);
+    car.speed = car.cruise;
   }
 }

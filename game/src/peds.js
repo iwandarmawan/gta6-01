@@ -1,62 +1,77 @@
-// Pedestrians: small figures strolling the sidewalks, turning at intersections.
-import { ROAD_EVERY, WORLD } from './config.js';
-import { mulberry32, range, pick } from './rng.js';
+// Pedestrians: people walking the sidewalks, so the city feels lived in.
+// Each one wanders between nearby points on foot, at a walking pace, and
+// never thinks about the player — which is why hitting one is a crime.
+import { ROADS_X, ROADS_Z } from './config.js';
 
-const SHIRTS = [0xe8e8e8, 0x3a6ad8, 0xe8b13a, 0x8a3ad8, 0x3ad86a, 0xd83a5a];
+const THREE = window.THREE;
 
-export function createPeds(scene, count = 18) {
-  const rng = mulberry32(4242);
+const SHIRTS = [0xe74c3c, 0x3498db, 0xf1c40f, 0x9b59b6, 0x1abc9c, 0xe67e22, 0xecf0f1];
+
+function makePedMesh(shirt) {
+  const group = new THREE.Group();
+  const legs = new THREE.Mesh(
+    new THREE.BoxGeometry(0.5, 0.8, 0.3),
+    new THREE.MeshLambertMaterial({ color: 0x2c3e50 }),
+  );
+  legs.position.y = 0.4;
+  const torso = new THREE.Mesh(
+    new THREE.BoxGeometry(0.6, 0.7, 0.35),
+    new THREE.MeshLambertMaterial({ color: shirt }),
+  );
+  torso.position.y = 1.15;
+  const head = new THREE.Mesh(
+    new THREE.BoxGeometry(0.4, 0.4, 0.4),
+    new THREE.MeshLambertMaterial({ color: 0xf1c27d }),
+  );
+  head.position.y = 1.7;
+  group.add(legs, torso, head);
+  group.traverse((m) => { if (m.isMesh) m.castShadow = true; });
+  return group;
+}
+
+function sidewalkPoint(rng) {
+  if (rng() < 0.5) {
+    const x = ROADS_X[Math.floor(rng() * ROADS_X.length)] + (rng() < 0.5 ? -6.5 : 6.5);
+    return { x, z: -150 + rng() * 300 };
+  }
+  const z = ROADS_Z[Math.floor(rng() * ROADS_Z.length)] + (rng() < 0.5 ? -6.5 : 6.5);
+  return { x: -210 + rng() * 360, z };
+}
+
+export function makePeds(scene, rng, count = 18) {
   const peds = [];
   for (let i = 0; i < count; i++) {
-    const group = new THREE.Group();
-    const shirt = new THREE.Mesh(
-      new THREE.BoxGeometry(0.7, 0.9, 0.4),
-      new THREE.MeshLambertMaterial({ color: pick(rng, SHIRTS) }),
-    );
-    shirt.position.y = 1.05;
-    const head = new THREE.Mesh(
-      new THREE.BoxGeometry(0.45, 0.45, 0.45),
-      new THREE.MeshLambertMaterial({ color: 0xe8b88a }),
-    );
-    head.position.y = 1.75;
-    const legs = new THREE.Mesh(
-      new THREE.BoxGeometry(0.6, 0.6, 0.35),
-      new THREE.MeshLambertMaterial({ color: 0x2a2a34 }),
-    );
-    legs.position.y = 0.3;
-    group.add(shirt, head, legs);
-    const x = Math.floor(range(rng, -3, 3)) * ROAD_EVERY + (rng() < 0.5 ? -8 : 8);
-    const z = range(rng, -170, 170);
-    group.position.set(x, 0, z);
-    scene.add(group);
+    const p = sidewalkPoint(rng);
+    const mesh = makePedMesh(SHIRTS[Math.floor(rng() * SHIRTS.length)]);
+    mesh.position.set(p.x, 0, p.z);
+    scene.add(mesh);
     peds.push({
-      group,
-      x,
-      z,
-      heading: pick(rng, [0, Math.PI / 2, Math.PI, -Math.PI / 2]),
-      speed: range(rng, 1.2, 2.2),
-      alive: true,
-      alongRoad: rng() < 0.5,
+      mesh, x: p.x, z: p.z,
+      target: sidewalkPoint(rng),
+      speed: 1 + rng() * 0.8,
+      heading: rng() * Math.PI * 2,
     });
   }
   return peds;
 }
 
-export function updatePeds(peds, dt) {
-  const lim = WORLD / 2 - 8;
-  for (const p of peds) {
-    if (!p.alive) continue;
-    p.x += Math.sin(p.heading) * p.speed * dt;
-    p.z += Math.cos(p.heading) * p.speed * dt;
-    // Turn at intersections so they stay on the grid.
-    const nearX = Math.abs(p.x % ROAD_EVERY) < 4 || Math.abs((p.x % ROAD_EVERY) - ROAD_EVERY) < 4;
-    const nearZ = Math.abs(p.z % ROAD_EVERY) < 4 || Math.abs((p.z % ROAD_EVERY) - ROAD_EVERY) < 4;
-    if ((nearX || nearZ) && Math.random() < dt * 0.25) {
-      p.heading = Math.floor(Math.random() * 4) * Math.PI / 2;
+// Walk toward the current target; pick a new one on arrival.
+export function updatePeds(peds, rng, dt) {
+  for (const ped of peds) {
+    const dx = ped.target.x - ped.x, dz = ped.target.z - ped.z;
+    const dist = Math.hypot(dx, dz);
+    if (dist < 1.5) {
+      ped.target = sidewalkPoint(rng);
+      continue;
     }
-    if (p.x > lim || p.x < -lim || p.z > lim || p.z < -lim) p.heading += Math.PI;
-    p.group.position.set(p.x, 0, p.z);
-    p.group.rotation.y = p.heading;
-    p.group.position.y = Math.abs(Math.sin(performance.now() / 300 + p.x)) * 0.06;
+    const want = Math.atan2(dx, dz);
+    let diff = want - ped.heading;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    ped.heading += Math.max(-3 * dt, Math.min(3 * dt, diff));
+    ped.x += Math.sin(ped.heading) * ped.speed * dt;
+    ped.z += Math.cos(ped.heading) * ped.speed * dt;
+    ped.mesh.position.set(ped.x, Math.abs(Math.sin(Date.now() * 0.004 + ped.x)) * 0.04, ped.z);
+    ped.mesh.rotation.y = ped.heading;
   }
 }
