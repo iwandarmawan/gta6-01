@@ -3,16 +3,64 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Solmar Bay — an open-world crime game</title>
+<title>Solmar Bay — Sunset Run</title>
 <style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #0d1b2a; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #1a1024; font-family: sans-serif; }
   #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
-  /* Read aloud, never shown: the status line screen readers announce. */
   #status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  #hud { position: fixed; inset: 0; pointer-events: none; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,0.8); }
+  #stars { position: absolute; top: 10px; left: 12px; font-size: 28px; letter-spacing: 2px; color: #ffd24a; }
+  #compass { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.45); padding: 4px 12px; border-radius: 4px; font-size: 15px; letter-spacing: 1px; }
+  #cashbox { position: absolute; top: 10px; right: 12px; text-align: right; }
+  #cash { font-size: 22px; font-weight: bold; }
+  #healthbar { width: 140px; height: 10px; background: rgba(0,0,0,0.55); border-radius: 5px; margin-top: 4px; overflow: hidden; }
+  #health { height: 100%; width: 100%; background: #5ac25a; }
+  #minimap { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); border: 2px solid rgba(255,255,255,0.6); border-radius: 4px; background: #3a2a3a; }
+  #objective { position: absolute; bottom: 66px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.55); padding: 6px 14px; border-radius: 4px; font-size: 16px; white-space: nowrap; }
+  #timer { position: absolute; bottom: 40px; left: 50%; transform: translateX(-50%); color: #ffd24a; font-size: 18px; font-weight: bold; }
+  #speed { position: absolute; bottom: 14px; right: 14px; font-size: 26px; font-weight: bold; }
+  #hint { position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%); font-size: 13px; opacity: 0.85; white-space: nowrap; }
+  #toast { position: absolute; top: 28%; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.65); padding: 8px 18px; border-radius: 6px; font-size: 19px; opacity: 0; transition: opacity 0.3s; white-space: nowrap; }
+  #menu { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; color: #fff; background: linear-gradient(rgba(46,26,82,0.9), rgba(255,126,95,0.6)); cursor: pointer; z-index: 10; padding: 20px; }
+  #menu h1 { font-size: 56px; margin: 0; letter-spacing: 6px; }
+  #menu h2 { font-size: 26px; margin: 6px 0 18px; color: #ffd24a; letter-spacing: 3px; }
+  #menu p { max-width: 560px; font-size: 16px; line-height: 1.5; }
+  #garage { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(20,12,28,0.95); border: 2px solid #ffd24a; border-radius: 8px; padding: 20px 26px; color: #fff; z-index: 9; text-align: center; pointer-events: auto; }
+  #garage h2 { margin: 0 0 10px; color: #ffd24a; }
+  #garage button { display: block; width: 260px; margin: 8px auto; padding: 10px; font-size: 15px; background: #7a2a3a; color: #fff; border: none; border-radius: 5px; cursor: pointer; }
+  #garage button:hover { background: #9a3a4a; }
+  #garage p { font-size: 14px; }
+  .hidden { display: none !important; }
 </style>
 </head>
 <body>
-<canvas id="game" aria-label="Solmar Bay: drive for Vera Costa across a coastal city, outrun the Solmar PD"></canvas>
+<canvas id="game" aria-label="Solmar Bay Sunset Run: an open-world crime game at dusk"></canvas>
+<div id="hud">
+  <div id="stars">☆☆☆☆☆</div>
+  <div id="compass">N NE E SE S</div>
+  <div id="cashbox"><span id="cash">$0</span><div id="healthbar"><div id="health"></div></div></div>
+  <canvas id="minimap" width="150" height="150"></canvas>
+  <div id="objective"></div>
+  <div id="timer"></div>
+  <div id="speed">0 km/h</div>
+  <div id="hint">WASD move / drive · E enter car · Click shoot · M mission · G garage · P pause</div>
+  <div id="toast"></div>
+</div>
+<div id="menu">
+  <h1>SOLMAR BAY</h1>
+  <h2>SUNSET RUN</h2>
+  <p>Rico Marlowe is back in Solmar Bay as the sun goes down over the sea. Vera Costa has six jobs lined up before dark — steal wheels, run the harbour, drive fares, jump the airfield ramp, and lift the lighthouse cache — while the Solmar Bay PD watches from every corner.</p>
+  <p>WASD move / drive · E enter or leave a car · Click to shoot · M mission · G garage (near Rico's Garage) · P pause</p>
+  <p><b>Click to start</b></p>
+</div>
+<div id="garage" class="hidden">
+  <h2>Rico's Garage</h2>
+  <p id="garage-info"></p>
+  <button id="buy-repair">Repair — $50</button>
+  <button id="buy-engine">Engine +25% top speed — $400</button>
+  <button id="buy-armor">Armor +50 HP — $300</button>
+  <p>Press G to close</p>
+</div>
 <p id="status" role="status" aria-live="polite"></p>
 <script src="./vendor/three.min.js"></script>
 <script type="module" src="./src/main.js"></script>
