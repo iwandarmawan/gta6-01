@@ -3,41 +3,62 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Solmar Bay — a night in the city</title>
+<title>Solmar Bay — Dawn Patrol</title>
 <style>
-  html, body { margin: 0; padding: 0; overflow: hidden; background: #0a1128; height: 100%; }
-  #game { display: block; width: 100vw; height: 100vh; }
-  #hud { position: fixed; inset: 0; pointer-events: none; font-family: 'Segoe UI', Arial, sans-serif; color: #fff; }
-  #stars { position: absolute; top: 14px; right: 18px; font-size: 26px; letter-spacing: 4px; color: #ffd24f; text-shadow: 0 0 8px #000; }
-  #cash { position: absolute; top: 48px; right: 18px; font-size: 24px; font-weight: bold; color: #7dff5e; text-shadow: 0 0 8px #000; }
-  #health { position: absolute; top: 84px; right: 18px; width: 150px; height: 10px; background: rgba(0,0,0,.55); border: 1px solid #888; }
-  #healthbar { height: 100%; width: 100%; background: #58d68d; }
-  #compass { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); font-size: 15px; letter-spacing: 2px; color: #cdd8ff; background: rgba(0,0,0,.45); padding: 4px 12px; border-radius: 4px; }
-  #objective { position: absolute; bottom: 96px; left: 50%; transform: translateX(-50%); font-size: 19px; font-weight: bold; color: #ffe14d; text-shadow: 0 2px 6px #000; background: rgba(0,0,0,.45); padding: 6px 14px; border-radius: 4px; white-space: nowrap; }
-  #timer { position: absolute; bottom: 62px; left: 50%; transform: translateX(-50%); font-size: 22px; font-weight: bold; color: #ff8a5c; text-shadow: 0 2px 6px #000; }
-  #speed { position: absolute; bottom: 18px; right: 20px; font-size: 26px; font-weight: bold; text-shadow: 0 2px 6px #000; }
-  #minimap { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); border: 2px solid rgba(255,255,255,.55); border-radius: 6px; background: #0a1128; }
-  #toast { position: absolute; top: 120px; left: 50%; transform: translateX(-50%); font-size: 20px; font-weight: bold; color: #7dff5e; text-shadow: 0 2px 6px #000; transition: opacity .4s; }
-  #menu { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(4, 8, 20, .78); pointer-events: auto; text-align: center; padding: 20px; }
-  #menu h1 { font-size: 64px; letter-spacing: 10px; margin: 0; color: #ffe14d; text-shadow: 0 0 24px #ff7a3c; }
-  #menu .sub { font-size: 20px; color: #7fd4ff; margin: 6px 0 18px; }
-  #menu p { max-width: 560px; font-size: 16px; line-height: 1.5; color: #dfe6ff; }
-  #menu .keys { font-size: 14px; color: #aab4d4; }
-  #menu .fine { font-size: 12px; color: #778; }
-  #startBtn { pointer-events: auto; cursor: pointer; font-size: 22px; font-weight: bold; padding: 14px 34px; margin-top: 14px; color: #0a1128; background: #ffe14d; border: none; border-radius: 6px; }
-  #startBtn:hover { background: #ffd24f; }
-  #endcard { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(10, 4, 8, .8); pointer-events: auto; text-align: center; }
-  #endcard h1 { font-size: 56px; letter-spacing: 8px; color: #ff4040; margin: 0; }
-  #endcard p { font-size: 18px; color: #fff; }
-  #endcard button { pointer-events: auto; cursor: pointer; font-size: 20px; font-weight: bold; padding: 12px 28px; color: #0a1128; background: #ffe14d; border: none; border-radius: 6px; }
-  #status { position: absolute; left: 6px; bottom: 4px; font-size: 10px; color: rgba(255,255,255,.35); }
+  html, body { margin: 0; padding: 0; overflow: hidden; background: #1a1410; font-family: sans-serif; }
+  #app { position: fixed; inset: 0; }
+  #hud { position: fixed; inset: 0; pointer-events: none; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,0.8); }
+  #mode { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.45); padding: 4px 14px; border-radius: 4px; font-size: 15px; letter-spacing: 2px; }
+  #topright { position: absolute; top: 12px; right: 14px; text-align: right; }
+  #stars { color: #ff4040; font-size: 22px; letter-spacing: 2px; }
+  #cash { color: #7dff8a; font-size: 20px; font-weight: bold; }
+  #hpbar { width: 140px; height: 10px; background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.5); margin-top: 4px; }
+  #hp { height: 100%; width: 100%; background: #4ae08a; }
+  #minimap { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); width: 140px; height: 140px; border: 1px solid rgba(255,255,255,0.7); background: rgba(10,16,30,0.72); }
+  #objective { position: absolute; bottom: 64px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.55); padding: 6px 18px; border-radius: 4px; font-size: 17px; color: #ffe9a0; white-space: nowrap; }
+  #timer { position: absolute; bottom: 40px; left: 50%; transform: translateX(-50%); color: #ff8080; font-size: 16px; font-weight: bold; }
+  #speed { position: absolute; bottom: 14px; right: 16px; font-size: 24px; font-weight: bold; }
+  #toast { position: absolute; top: 64px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.6); padding: 5px 16px; border-radius: 4px; font-size: 15px; opacity: 0; transition: opacity 0.3s; }
+  #status { position: absolute; bottom: 4px; left: 6px; font-size: 10px; color: rgba(255,255,255,0.5); }
+  #menu { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; background: rgba(10,10,20,0.72); padding: 28px 44px; border-radius: 8px; }
+  #menu h1 { margin: 0 0 6px; font-size: 34px; color: #ffd9a8; letter-spacing: 3px; }
+  #menu p { margin: 4px 0; color: #ddd; font-size: 15px; }
+  #menu .keys { color: #9ad9ff; font-size: 13px; margin-top: 12px; }
 </style>
 </head>
 <body>
-<canvas id="game"></canvas>
-<div id="hud"></div>
-<div id="status">loading</div>
-<script src="vendor/three.min.js"></script>
-<script type="module" src="src/main.js"></script>
+<div id="app"></div>
+<div id="hud">
+  <div id="mode">E · ON FOOT</div>
+  <div id="topright">
+    <div id="stars">☆☆☆☆☆</div>
+    <div id="cash">$0</div>
+    <div id="hpbar"><div id="hp"></div></div>
+  </div>
+  <canvas id="minimap" width="140" height="140"></canvas>
+  <div id="objective">Steal a car (walk up and press E)</div>
+  <div id="timer"></div>
+  <div id="speed">0 km/h</div>
+  <div id="toast"></div>
+  <div id="status">loading</div>
+</div>
+<div id="menu">
+  <h1>SOLMAR BAY</h1>
+  <p>Dawn Patrol — Rico Marlowe wakes the city up.</p>
+  <p>Six missions. Steal cars, boats and a bike. Dodge the law.</p>
+  <p class="keys">WASD drive / walk &nbsp;·&nbsp; E enter, exit, interact &nbsp;·&nbsp; F shoot &nbsp;·&nbsp; Shift run</p>
+  <p class="keys">Click anywhere to start driving. The sun is coming up — make it count.</p>
+</div>
+<script src="./vendor/three.min.js"></script>
+<script type="importmap">
+{ "imports": { "three": "./src/three-shim.js" } }
+</script>
+<script type="module" src="./src/main.js"></script>
+<script>
+  document.addEventListener('click', () => {
+    const m = document.getElementById('menu');
+    if (m) m.style.display = 'none';
+  }, { once: true });
+</script>
 </body>
 </html>
